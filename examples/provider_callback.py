@@ -12,13 +12,23 @@ from typing import Any
 from luaskills import LuaSkillsClient, LuaSkillsJsonFfi
 
 
-def resolve_library_path() -> Path:
+def resolve_runtime_root() -> Path:
     """
-    Resolve the demo LuaSkills dynamic library path.
-    解析演示用 LuaSkills 动态库路径。
+    Resolve the runtime root used by source-tree examples.
+    解析源码示例使用的 runtime root。
     """
 
-    return Path(os.environ.get("LUASKILLS_LIB") or Path(__file__).resolve().parents[3] / "target" / "debug" / "luaskills.dll")
+    return Path(os.environ.get("LUASKILLS_RUNTIME_ROOT") or Path.cwd() / "luaskills-runtime").resolve()
+
+
+def resolve_library_path() -> Path | None:
+    """
+    Resolve an optional explicit LuaSkills dynamic library path.
+    解析可选的显式 LuaSkills 动态库路径。
+    """
+
+    value = os.environ.get("LUASKILLS_LIB")
+    return Path(value).resolve() if value else None
 
 
 def sqlite_provider(request: Any) -> dict[str, Any]:
@@ -36,9 +46,9 @@ def main() -> None:
     在创建引擎前注册单个 SQLite JSON provider callback。
     """
 
+    runtime_root = resolve_runtime_root()
     library_path = resolve_library_path()
-    runtime_root = Path(os.environ.get("LUASKILLS_RUNTIME_ROOT") or Path(__file__).resolve().parent / "luaskills-runtime")
-    ffi = LuaSkillsJsonFfi(library_path)
+    ffi = LuaSkillsJsonFfi(library_path=library_path, runtime_root=runtime_root)
     ffi.set_sqlite_provider_json_callback(sqlite_provider)
     try:
         client = LuaSkillsClient(

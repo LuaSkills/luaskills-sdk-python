@@ -203,6 +203,27 @@ The source repository also keeps `examples/basic.py` and `examples/provider_call
 
 源码仓库中同样保留 `examples/basic.py` 与 `examples/provider_callback.py`，便于直接阅读。
 
+Source-tree examples include query and lifecycle flows with a bundled USER-layer fixture skill:
+
+源码仓库示例还包含 query 与 lifecycle 流程，并带有一个内置 USER 层夹具 skill：
+
+```powershell
+luaskills install-runtime --database none --runtime-root .\examples\fixture_runtime
+python .\examples\basic.py
+python .\examples\call.py
+python .\examples\query.py
+python .\examples\lifecycle.py
+python .\examples\provider_callback.py
+```
+
+The fixture skill lives at `examples/fixture_runtime/user_skills/demo-standard-ffi-skill`, so delegated-query examples can see it without System authority.
+
+夹具 skill 位于 `examples/fixture_runtime/user_skills/demo-standard-ffi-skill`，因此委托查询示例不需要 System 权限也能看到它。
+
+See `examples/README.md` for the full example index and runtime notes.
+
+完整示例索引与 runtime 注意事项见 `examples/README.md`。
+
 ## Authority And Management
 
 Query APIs default to `DelegatedTool`, so ROOT skills are hidden from delegated tools.
