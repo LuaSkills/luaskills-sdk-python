@@ -1,0 +1,158 @@
+name: Examples Release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  examples-release:
+    name: Build and publish examples release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Resolve release version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(tr -d '[:space:]' < VERSION)"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid VERSION value: $version" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "release_tag=examples-v$version" >> "$GITHUB_OUTPUT"
+          echo "package_name=luaskills-sdk-python-examples-$version" >> "$GITHUB_OUTPUT"
+          echo "asset_name=luaskills-sdk-python-examples-$version.zip" >> "$GITHUB_OUTPUT"
+
+      - name: Create standalone examples package
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          PACKAGE_NAME: ${{ steps.version.outputs.package_name }}
+        run: |
+          set -euo pipefail
+          package_root="target/examples-release/$PACKAGE_NAME"
+          mkdir -p "$package_root"
+          cp LICENSE README.md README_cn.md "$package_root/"
+          cp -R examples "$package_root/examples"
+          cat > "$package_root/requirements.txt" <<REQUIREMENTS
+          luaskills-sdk==$VERSION
+          REQUIREMENTS
+          cat > "$package_root/EXAMPLES_RELEASE.md" <<MARKDOWN
+          # LuaSkills Python SDK Examples $VERSION
+
+          English documentation is the default documentation. For Chinese, see README_cn.md and examples/README_cn.md.
+
+          These examples install and use the published PyPI package:
+
+          \`\`\`bash
+          python -m venv .venv
+          . .venv/bin/activate
+          python -m pip install -r requirements.txt
+          luaskills install-runtime --database none --runtime-root examples/fixture_runtime
+          python examples/basic.py
+          python examples/query.py
+          \`\`\`
+
+          Main repository: https://github.com/LuaSkills/luaskills
+          MARKDOWN
+
+      - name: Install published SDK and runtime assets
+        shell: bash
+        working-directory: target/examples-release/${{ steps.version.outputs.package_name }}
+        run: |
+          set -euo pipefail
+          python -m venv .venv
+          . .venv/bin/activate
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          luaskills install-runtime --database none --runtime-root examples/fixture_runtime
+
+      - name: Run published-package smoke examples
+        shell: bash
+        working-directory: target/examples-release/${{ steps.version.outputs.package_name }}
+        env:
+          LUASKILLS_RUNTIME_ROOT: ${{ github.workspace }}/target/examples-release/${{ steps.version.outputs.package_name }}/examples/fixture_runtime
+          LUASKILLS_EXAMPLE_RUNTIME_ROOT: ${{ github.workspace }}/target/examples-release/${{ steps.version.outputs.package_name }}/examples/fixture_runtime
+        run: |
+          set -euo pipefail
+          . .venv/bin/activate
+          python -m compileall examples
+          python examples/basic.py
+          python examples/query.py
+          python examples/call.py
+          python examples/lifecycle.py
+          python examples/provider_callback.py
+
+      - name: Package examples asset
+        shell: bash
+        env:
+          PACKAGE_NAME: ${{ steps.version.outputs.package_name }}
+          ASSET_NAME: ${{ steps.version.outputs.asset_name }}
+        run: |
+          set -euo pipefail
+          mkdir -p target/release-assets
+          (
+            cd target/examples-release
+            zip -qr "../release-assets/$ASSET_NAME" "$PACKAGE_NAME"
+          )
+          (
+            cd target/release-assets
+            sha256sum "$ASSET_NAME" > "$ASSET_NAME.sha256"
+          )
+
+      - name: Write release notes
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          cat > target/release-assets/RELEASE_NOTES.md <<MARKDOWN
+          ## LuaSkills Python SDK Examples $VERSION
+
+          This release contains a standalone examples package for the published PyPI package \`luaskills-sdk==$VERSION\`.
+
+          The package was smoke-tested by installing the published SDK, installing LuaSkills runtime assets, and running the bundled examples.
+
+          Main repository: https://github.com/LuaSkills/luaskills
+
+          ## 中文说明
+
+          本 Release 包含面向已发布 PyPI 包 \`luaskills-sdk==$VERSION\` 的独立示例包。
+
+          工作流已通过安装正式 SDK、安装 LuaSkills runtime 资产并运行内置示例完成冒烟验证。
+          MARKDOWN
+
+      - name: Publish GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.version.outputs.release_tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+          ASSET_NAME: ${{ steps.version.outputs.asset_name }}
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" \
+              "target/release-assets/$ASSET_NAME" \
+              "target/release-assets/$ASSET_NAME.sha256" \
+              --clobber
+          else
+            gh release create "$RELEASE_TAG" \
+              "target/release-assets/$ASSET_NAME" \
+              "target/release-assets/$ASSET_NAME.sha256" \
+              --target "$GITHUB_SHA" \
+              --title "LuaSkills Python SDK Examples $VERSION" \
+              --notes-file target/release-assets/RELEASE_NOTES.md
+          fi

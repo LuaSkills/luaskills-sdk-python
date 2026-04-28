@@ -239,3 +239,23 @@ Test-Path D:\runtime\luaskills\lua_packages
 python -m compileall src/luaskills
 PYTHONPATH=src python -m luaskills.cli version --runtime-root D:/runtime/luaskills
 ```
+
+## 发布
+
+发布版本记录在 `VERSION`。发布前请保持 `VERSION` 与 `pyproject.toml` 一致。
+
+发布前执行：
+
+```bash
+python -m build
+twine check dist/*
+```
+
+每次 PyPI publish 都必须使用新的 patch 版本；已发布版本不能覆盖。
+
+PyPI 发布成功后，手动运行 GitHub Actions 里的 **Examples Release** 工作流。它会读取 `VERSION`，从 PyPI 安装 `luaskills-sdk=={VERSION}`，安装 LuaSkills runtime 资产，运行示例冒烟测试，然后创建或更新 `examples-v{VERSION}` GitHub Release，并上传：
+
+- `luaskills-sdk-python-examples-{VERSION}.zip`
+- `luaskills-sdk-python-examples-{VERSION}.zip.sha256`
+
+示例 release tag 故意使用 `examples-v` 前缀，因为它是示例资产发布，不是 SDK 包版本。

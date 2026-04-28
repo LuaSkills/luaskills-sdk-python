@@ -64,3 +64,9 @@ python -m luaskills.examples.provider_callback
 ## Fixture Skill
 
 The fixture skill is stored at `examples/fixture_runtime/user_skills/demo-standard-ffi-skill`. It intentionally lives in USER so delegated-query examples can see it without System authority.
+
+## Release Package
+
+The repository workflow **Examples Release** creates `luaskills-sdk-python-examples-{VERSION}.zip` after the matching PyPI package is published. The workflow installs `luaskills-sdk=={VERSION}` from PyPI and runs the examples before uploading the asset.
+
+The release tag is `examples-v{VERSION}` so example assets stay separate from SDK package versions.

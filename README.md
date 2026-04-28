@@ -239,3 +239,23 @@ For source-tree validation:
 python -m compileall src/luaskills
 PYTHONPATH=src python -m luaskills.cli version --runtime-root D:/runtime/luaskills
 ```
+
+## Publishing
+
+The release version is stored in `VERSION`. Keep `VERSION` and `pyproject.toml` aligned before publishing.
+
+Before publishing:
+
+```bash
+python -m build
+twine check dist/*
+```
+
+Use a new patch version for every PyPI publish. Published versions cannot be overwritten.
+
+After PyPI publishes successfully, run the GitHub Actions workflow **Examples Release** manually. It reads `VERSION`, installs `luaskills-sdk=={VERSION}` from PyPI, installs LuaSkills runtime assets, runs the examples, then creates or updates the `examples-v{VERSION}` GitHub Release with:
+
+- `luaskills-sdk-python-examples-{VERSION}.zip`
+- `luaskills-sdk-python-examples-{VERSION}.zip.sha256`
+
+The examples release tag intentionally uses the `examples-v` prefix because it is an examples asset release, not an SDK package version.
