@@ -58,6 +58,8 @@ python .\examples\lifecycle.py
 python .\examples\provider_callback.py
 ```
 
+Model callback integration is documented in the main [SDK README](../README.md#model-callback). The generic examples do not call a real model provider because model credentials, provider choice, budgets, and redaction policy are host-owned.
+
 ## Wheel Examples
 
 The wheel also ships module examples for quick smoke tests:

@@ -186,6 +186,74 @@ ffi.set_host_tool_json_callback(host_tool_callback)
 
 The callback receives `{ action, tool_name, args }`. `list` should return host-visible tool metadata, `has` should return a boolean or an object with `exists` / `has` / `available`, and `call` should return one complete table-shaped result. Call `ffi.clear_host_tool_json_callback()` during shutdown. Streaming is intentionally outside this bridge.
 
+## Model Callback
+
+`vulcan.models.*` uses fixed model callbacks registered through `luaskills_ffi_set_model_embed_json_callback` and `luaskills_ffi_set_model_llm_json_callback`. Lua skills can only call `vulcan.models.embed(text)` and `vulcan.models.llm(system, user)`; provider selection, model names, keys, temperature, thinking, limits, and stream policy stay fully host-owned.
+
+Register model callbacks before creating or using an engine that may run model-aware skills. Keep the `LuaSkillsJsonFfi` instance alive for as long as the callback should stay registered, and clear callbacks during shutdown or test teardown.
+
+The SDK callback is the host boundary:
+
+- It receives a fixed request shape from LuaSkills.
+- It should call the host-selected provider using host-managed configuration.
+- It should return a bare success payload for successful provider calls.
+- It should return an error envelope for provider failures that need `provider_message`, `provider_code`, or `provider_status`.
+- It should not expose API keys, Authorization headers, signatures, or raw request headers in provider error fields.
+
+```python
+from luaskills import LuaSkillsJsonFfi, RuntimeModelEmbedRequest, RuntimeModelLlmRequest
+
+runtime_root = "D:/runtime/luaskills"
+ffi = LuaSkillsJsonFfi(runtime_root=runtime_root)
+
+
+def embed_callback(request: RuntimeModelEmbedRequest):
+    return {
+        "vector": [0.1, 0.2, 0.3],
+        "dimensions": 3,
+        "usage": {"input_tokens": len(request["text"])},
+    }
+
+
+def llm_callback(request: RuntimeModelLlmRequest):
+    if "missing-model" in request["user"]:
+        return {
+            "ok": False,
+            "error": {
+                "code": "provider_error",
+                "message": "model provider rejected the request",
+                "provider_message": "raw provider message after host-side redaction",
+                "provider_code": "model_not_found",
+                "provider_status": 404,
+            },
+        }
+    return {
+        "assistant": f"handled {request['system']}: {request['user']}",
+        "usage": {"input_tokens": 12, "output_tokens": 8},
+    }
+
+
+ffi.set_model_embed_json_callback(embed_callback)
+ffi.set_model_llm_json_callback(llm_callback)
+```
+
+The callback request includes `{ text, caller }` for embeddings and `{ system, user, caller }` for LLM calls. Return bare success payloads, or `{ ok: false, error: { code, message, provider_message?, provider_code?, provider_status? } }` for provider failures. Call `ffi.clear_model_embed_json_callback()` and `ffi.clear_model_llm_json_callback()` during shutdown.
+
+Minimal runtime check after registration:
+
+```python
+status = client.run_lua("return vulcan.models.status()")
+embed_result = client.run_lua('return vulcan.models.embed("hello")')
+llm_result = client.run_lua('return vulcan.models.llm("system", "user")')
+```
+
+Common integration mistakes:
+
+- `model_unavailable`: the matching callback was not registered or was cleared before the skill call.
+- Missing provider details: return a structured error envelope instead of raising provider errors from the callback.
+- Missing FFI symbol: install a LuaSkills runtime that exports `luaskills_ffi_set_model_embed_json_callback` and `luaskills_ffi_set_model_llm_json_callback`.
+- Empty `caller` fields: call through a loaded runtime skill or a runtime `run_lua` context, not a detached provider unit test.
+
 ## Examples
 
 The wheel includes runnable examples:

@@ -186,6 +186,74 @@ ffi.set_host_tool_json_callback(host_tool_callback)
 
 callback 会收到 `{ action, tool_name, args }`。`list` 应返回宿主开放给 Lua 的工具元数据；`has` 应返回 boolean，或带有 `exists` / `has` / `available` 的对象；`call` 应返回一次完整的 table 形态结果。宿主关闭时调用 `ffi.clear_host_tool_json_callback()` 清理注册。该桥接刻意不支持 stream。
 
+## 模型 Callback
+
+`vulcan.models.*` 使用通过 `luaskills_ffi_set_model_embed_json_callback` 与 `luaskills_ffi_set_model_llm_json_callback` 注册的固定模型 callback。Lua skill 只能调用 `vulcan.models.embed(text)` 与 `vulcan.models.llm(system, user)`；provider 选择、模型名、密钥、temperature、thinking、限额和 stream 策略全部归宿主管理。
+
+请在创建或使用可能运行模型类 skill 的 engine 前注册模型 callback。`LuaSkillsJsonFfi` 实例需要在 callback 生效期间保持存活；宿主关闭或测试清理时应显式清理 callback。
+
+SDK callback 是宿主模型边界：
+
+- 它接收 LuaSkills 发来的固定请求结构。
+- 它应使用宿主选择的 provider 和宿主管理的配置发起真实模型调用。
+- provider 成功时返回裸成功载荷。
+- provider 失败且需要排查时返回结构化错误包络，保留 `provider_message`、`provider_code`、`provider_status`。
+- 不要在 provider 错误字段里暴露 API key、Authorization header、签名或完整原始请求头。
+
+```python
+from luaskills import LuaSkillsJsonFfi, RuntimeModelEmbedRequest, RuntimeModelLlmRequest
+
+runtime_root = "D:/runtime/luaskills"
+ffi = LuaSkillsJsonFfi(runtime_root=runtime_root)
+
+
+def embed_callback(request: RuntimeModelEmbedRequest):
+    return {
+        "vector": [0.1, 0.2, 0.3],
+        "dimensions": 3,
+        "usage": {"input_tokens": len(request["text"])},
+    }
+
+
+def llm_callback(request: RuntimeModelLlmRequest):
+    if "missing-model" in request["user"]:
+        return {
+            "ok": False,
+            "error": {
+                "code": "provider_error",
+                "message": "model provider rejected the request",
+                "provider_message": "raw provider message after host-side redaction",
+                "provider_code": "model_not_found",
+                "provider_status": 404,
+            },
+        }
+    return {
+        "assistant": f"handled {request['system']}: {request['user']}",
+        "usage": {"input_tokens": 12, "output_tokens": 8},
+    }
+
+
+ffi.set_model_embed_json_callback(embed_callback)
+ffi.set_model_llm_json_callback(llm_callback)
+```
+
+embedding callback 会收到 `{ text, caller }`，LLM callback 会收到 `{ system, user, caller }`。成功时返回裸响应载荷；provider 失败时返回 `{ ok: false, error: { code, message, provider_message?, provider_code?, provider_status? } }`。宿主关闭时调用 `ffi.clear_model_embed_json_callback()` 和 `ffi.clear_model_llm_json_callback()` 清理注册。
+
+注册后的最小运行时检查：
+
+```python
+status = client.run_lua("return vulcan.models.status()")
+embed_result = client.run_lua('return vulcan.models.embed("hello")')
+llm_result = client.run_lua('return vulcan.models.llm("system", "user")')
+```
+
+常见对接问题：
+
+- `model_unavailable`：对应 callback 没有注册，或在 skill 调用前已经被清理。
+- 缺少 provider 细节：请从 callback 返回结构化错误包络，而不是直接抛出 provider 异常。
+- 缺少 FFI symbol：请确认 runtime 动态库包含 `luaskills_ffi_set_model_embed_json_callback` 与 `luaskills_ffi_set_model_llm_json_callback`。
+- `caller` 字段为空：请通过已加载 runtime skill 或 runtime `run_lua` 上下文调用，不要用脱离 runtime 的 provider 单元测试判断 caller context。
+
 ## 示例
 
 wheel 内置可运行示例：

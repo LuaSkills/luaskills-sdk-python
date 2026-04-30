@@ -58,6 +58,8 @@ python .\examples\lifecycle.py
 python .\examples\provider_callback.py
 ```
 
+模型 callback 对接见主 [SDK README](../README_cn.md#模型-callback)。通用示例不直接调用真实模型 provider，因为模型凭证、provider 选择、预算与脱敏策略都归宿主管理。
+
 ## Wheel 示例
 
 wheel 也内置模块示例，便于快速烟测：

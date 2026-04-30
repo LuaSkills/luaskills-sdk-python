@@ -69,6 +69,173 @@ class HostToolJsonRequest(TypedDict):
 # 由 SDK 调用方实现的宿主工具桥接 JSON callback。
 HostToolJsonCallback = Callable[[HostToolJsonRequest], Any]
 
+# Standard model capability names exposed by vulcan.models.*.
+# vulcan.models.* 暴露的标准模型能力名称。
+RuntimeModelCapability = Literal["embed", "llm"]
+
+
+class RuntimeModelCaller(TypedDict, total=False):
+    """
+    Caller context attached by LuaSkills to each model callback request.
+    LuaSkills 附加到每个模型 callback 请求上的调用方上下文。
+    """
+
+    # Skill identifier that owns the active Lua entry.
+    # 拥有当前 Lua 入口的 skill 标识符。
+    skill_id: str | None
+    # Local entry name declared by the owning skill.
+    # 所属 skill 声明的局部入口名称。
+    entry_name: str | None
+    # Canonical runtime tool name currently executing.
+    # 当前正在执行的 canonical 运行时工具名称。
+    canonical_tool_name: str | None
+    # Runtime root name that owns the current skill.
+    # 拥有当前 skill 的运行时根名称。
+    root_name: str | None
+    # Host-visible absolute skill directory.
+    # 对宿主可见的绝对 skill 目录。
+    skill_dir: str | None
+    # Host-provided client name from the current request context.
+    # 当前请求上下文中的宿主提供客户端名称。
+    client_name: str | None
+    # Host-provided request identifier from the current request context.
+    # 当前请求上下文中的宿主提供请求标识符。
+    request_id: str | None
+
+
+class RuntimeModelUsage(TypedDict, total=False):
+    """
+    Optional token usage metadata returned by host-managed model providers.
+    宿主管理模型 provider 返回的可选 token 用量元数据。
+    """
+
+    # Optional input token count.
+    # 可选输入 token 数量。
+    input_tokens: int | None
+    # Optional output token count.
+    # 可选输出 token 数量。
+    output_tokens: int | None
+
+
+class RuntimeModelEmbedRequest(TypedDict):
+    """
+    Embedding request delivered to the SDK callback.
+    传递给 SDK callback 的 embedding 请求。
+    """
+
+    # Single input text requested by Lua.
+    # Lua 请求的单条输入文本。
+    text: str
+    # Caller context captured from the active Lua runtime scope.
+    # 从当前 Lua 运行时作用域捕获的调用方上下文。
+    caller: RuntimeModelCaller
+
+
+class RuntimeModelEmbedResponse(TypedDict, total=False):
+    """
+    Embedding response returned by the SDK callback.
+    SDK callback 返回的 embedding 响应。
+    """
+
+    # Embedding vector returned by the host-managed model provider.
+    # 宿主管理模型 provider 返回的 embedding 向量。
+    vector: list[float]
+    # Number of vector dimensions reported by the host.
+    # 宿主报告的向量维度数量。
+    dimensions: int
+    # Optional token usage metadata reported by the host.
+    # 宿主报告的可选 token 用量元数据。
+    usage: RuntimeModelUsage | None
+
+
+class RuntimeModelLlmRequest(TypedDict):
+    """
+    Non-streaming LLM request delivered to the SDK callback.
+    传递给 SDK callback 的非流式 LLM 请求。
+    """
+
+    # System instruction text supplied by Lua.
+    # Lua 提供的 system 指令文本。
+    system: str
+    # User message text supplied by Lua.
+    # Lua 提供的 user 消息文本。
+    user: str
+    # Caller context captured from the active Lua runtime scope.
+    # 从当前 Lua 运行时作用域捕获的调用方上下文。
+    caller: RuntimeModelCaller
+
+
+class RuntimeModelLlmResponse(TypedDict, total=False):
+    """
+    Non-streaming LLM response returned by the SDK callback.
+    SDK callback 返回的非流式 LLM 响应。
+    """
+
+    # Assistant text returned by the host-managed model provider.
+    # 宿主管理模型 provider 返回的 assistant 文本。
+    assistant: str
+    # Optional token usage metadata reported by the host.
+    # 宿主报告的可选 token 用量元数据。
+    usage: RuntimeModelUsage | None
+
+
+# Stable model error codes accepted by the JSON callback bridge.
+# JSON callback 桥接受的稳定模型错误码。
+RuntimeModelErrorCode = Literal[
+    "model_unavailable",
+    "invalid_argument",
+    "provider_error",
+    "timeout",
+    "budget_exceeded",
+    "internal_error",
+]
+
+
+class RuntimeModelError(TypedDict, total=False):
+    """
+    Structured model error returned by a model JSON callback.
+    模型 JSON callback 返回的结构化模型错误。
+    """
+
+    # Stable LuaSkills-level model error code.
+    # 稳定的 LuaSkills 级模型错误码。
+    code: RuntimeModelErrorCode
+    # Human-readable error summary.
+    # 人类可读的错误摘要。
+    message: str
+    # Optional raw provider error text after host-side redaction.
+    # 宿主侧脱敏后的可选 provider 原始错误文本。
+    provider_message: str | None
+    # Optional raw provider error code.
+    # 可选 provider 原始错误码。
+    provider_code: str | None
+    # Optional provider status such as an HTTP status code.
+    # 可选 provider 状态，例如 HTTP 状态码。
+    provider_status: int | None
+
+
+class RuntimeModelErrorEnvelope(TypedDict):
+    """
+    Error envelope returned by a model JSON callback.
+    模型 JSON callback 返回的错误包络。
+    """
+
+    # Always false for callback error envelopes.
+    # callback 错误包络中固定为 false。
+    ok: Literal[False]
+    # Structured model error payload.
+    # 结构化模型错误载荷。
+    error: RuntimeModelError
+
+
+# Host-side model embedding JSON callback implemented by SDK callers.
+# 由 SDK 调用方实现的宿主侧模型 embedding JSON callback。
+ModelEmbedJsonCallback = Callable[[RuntimeModelEmbedRequest], RuntimeModelEmbedResponse | RuntimeModelErrorEnvelope]
+
+# Host-side model LLM JSON callback implemented by SDK callers.
+# 由 SDK 调用方实现的宿主侧模型 LLM JSON callback。
+ModelLlmJsonCallback = Callable[[RuntimeModelLlmRequest], RuntimeModelLlmResponse | RuntimeModelErrorEnvelope]
+
 
 JSON_PROVIDER_CALLBACK_TYPE = ctypes.CFUNCTYPE(
     ctypes.c_int32,
@@ -220,6 +387,30 @@ class LuaSkillsJsonFfi:
             callback,
         )
 
+    def set_model_embed_json_callback(self, callback: ModelEmbedJsonCallback | None) -> None:
+        """
+        Register or clear the model embedding JSON callback.
+        注册或清理模型 embedding JSON callback。
+        """
+
+        self._set_json_provider_callback(
+            "model-embed",
+            "luaskills_ffi_set_model_embed_json_callback",
+            callback,
+        )
+
+    def set_model_llm_json_callback(self, callback: ModelLlmJsonCallback | None) -> None:
+        """
+        Register or clear the model LLM JSON callback.
+        注册或清理模型 LLM JSON callback。
+        """
+
+        self._set_json_provider_callback(
+            "model-llm",
+            "luaskills_ffi_set_model_llm_json_callback",
+            callback,
+        )
+
     def clear_sqlite_provider_json_callback(self) -> None:
         """
         Clear the SQLite JSON provider callback slot.
@@ -243,6 +434,22 @@ class LuaSkillsJsonFfi:
         """
 
         self.set_host_tool_json_callback(None)
+
+    def clear_model_embed_json_callback(self) -> None:
+        """
+        Clear the model embedding JSON callback slot.
+        清理模型 embedding JSON callback 槽位。
+        """
+
+        self.set_model_embed_json_callback(None)
+
+    def clear_model_llm_json_callback(self) -> None:
+        """
+        Clear the model LLM JSON callback slot.
+        清理模型 LLM JSON callback 槽位。
+        """
+
+        self.set_model_llm_json_callback(None)
 
     def _decode_envelope(self, function_name: str, raw_buffer: FfiOwnedBuffer) -> Any:
         """
