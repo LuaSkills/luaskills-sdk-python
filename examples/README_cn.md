@@ -40,6 +40,12 @@ python .\examples\query.py
 python .\examples\call.py
 ```
 
+`host_tool_callback.py` 注册一个 mock `model.embed` 宿主工具 callback，并从内联 Lua 调用 `vulcan.host.list`、`vulcan.host.has` 与 `vulcan.host.call`。
+
+```powershell
+python .\examples\host_tool_callback.py
+```
+
 `lifecycle.py` 演示通过普通 Skills plane 执行 `disable` 与 `enable`。
 
 ```powershell
@@ -58,6 +64,7 @@ wheel 也内置模块示例，便于快速烟测：
 
 ```powershell
 python -m luaskills.examples.basic
+python -m luaskills.examples.host_tool_callback
 python -m luaskills.examples.provider_callback
 ```
 

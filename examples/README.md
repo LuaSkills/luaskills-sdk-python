@@ -40,6 +40,12 @@ python .\examples\query.py
 python .\examples\call.py
 ```
 
+`host_tool_callback.py` registers a mock `model.embed` host-tool callback and exercises `vulcan.host.list`, `vulcan.host.has`, and `vulcan.host.call` from inline Lua.
+
+```powershell
+python .\examples\host_tool_callback.py
+```
+
 `lifecycle.py` demonstrates `disable` and `enable` through the ordinary Skills plane.
 
 ```powershell
@@ -58,6 +64,7 @@ The wheel also ships module examples for quick smoke tests:
 
 ```powershell
 python -m luaskills.examples.basic
+python -m luaskills.examples.host_tool_callback
 python -m luaskills.examples.provider_callback
 ```
 

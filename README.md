@@ -6,7 +6,7 @@ Main LuaSkills repository: [LuaSkills/luaskills](https://github.com/LuaSkills/lu
 
 Python SDK for integrating the LuaSkills runtime through the public JSON FFI surface.
 
-The SDK wraps native library loading, JSON FFI buffers, engine lifecycle, formal skill roots, authority-aware management calls, skill config, provider callbacks, and runtime asset installation. Hosts should not need to hand-write low-level FFI buffers or JSON envelopes for normal integration.
+The SDK wraps native library loading, JSON FFI buffers, engine lifecycle, formal skill roots, authority-aware management calls, skill config, provider callbacks, host-tool callbacks, and runtime asset installation. Hosts should not need to hand-write low-level FFI buffers or JSON envelopes for normal integration.
 
 ## Installation
 
@@ -151,12 +151,48 @@ finally:
 
 Callbacks must be registered before `engine_new`. Changing callbacks later does not retroactively affect already-created engines.
 
+## Host Tool Callback
+
+`vulcan.host.*` uses the fixed host-tool callback registered through `luaskills_ffi_set_host_tool_json_callback`. Register it before running skills that may call host-owned tools:
+
+```python
+from luaskills import HostToolJsonRequest, LuaSkillsJsonFfi
+
+# Runtime root used by the host integration.
+# 宿主集成使用的运行时根目录。
+runtime_root = "D:/runtime/luaskills"
+# Low-level FFI bridge that owns callback registration.
+# 持有 callback 注册的底层 FFI 桥。
+ffi = LuaSkillsJsonFfi(runtime_root=runtime_root)
+
+
+def host_tool_callback(request: HostToolJsonRequest):
+    """
+    Handle list, has, and call actions from vulcan.host.*.
+    处理来自 vulcan.host.* 的 list、has 和 call 动作。
+    """
+
+    if request["action"] == "list":
+        return [{"name": "model.embed", "description": "embedding model bridge"}]
+    if request["action"] == "has":
+        return request["tool_name"] == "model.embed"
+    if request["action"] == "call":
+        return {"ok": True, "value": {"request": request["args"]}}
+    return {"ok": False, "error": {"code": "unsupported_action", "message": request["action"]}}
+
+
+ffi.set_host_tool_json_callback(host_tool_callback)
+```
+
+The callback receives `{ action, tool_name, args }`. `list` should return host-visible tool metadata, `has` should return a boolean or an object with `exists` / `has` / `available`, and `call` should return one complete table-shaped result. Call `ffi.clear_host_tool_json_callback()` during shutdown. Streaming is intentionally outside this bridge.
+
 ## Examples
 
 The wheel includes runnable examples:
 
 ```bash
 python -m luaskills.examples.basic
+python -m luaskills.examples.host_tool_callback
 python -m luaskills.examples.provider_callback
 ```
 
@@ -166,6 +202,7 @@ Source-tree examples include query and lifecycle flows with a bundled USER-layer
 luaskills install-runtime --database none --runtime-root .\examples\fixture_runtime
 python .\examples\basic.py
 python .\examples\call.py
+python .\examples\host_tool_callback.py
 python .\examples\query.py
 python .\examples\lifecycle.py
 python .\examples\provider_callback.py

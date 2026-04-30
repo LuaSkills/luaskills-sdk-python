@@ -13,7 +13,15 @@ from .client import (
     default_pool_config,
     default_space_controller_options,
 )
-from .ffi import JsonProviderCallback, LuaSkillsError, LuaSkillsJsonFfi, resolve_library_path
+from .ffi import (
+    HostToolJsonAction,
+    HostToolJsonCallback,
+    HostToolJsonRequest,
+    JsonProviderCallback,
+    LuaSkillsError,
+    LuaSkillsJsonFfi,
+    resolve_library_path,
+)
 from .roots import RuntimeRoots
 from .runtime_assets import (
     RuntimeDatabasePreset,
@@ -30,6 +38,9 @@ from .types import Authority, LuaInvocationContext, RuntimeSkillRoot, SkillInsta
 
 __all__ = [
     "Authority",
+    "HostToolJsonAction",
+    "HostToolJsonCallback",
+    "HostToolJsonRequest",
     "JsonProviderCallback",
     "LuaInvocationContext",
     "LuaSkillsClient",

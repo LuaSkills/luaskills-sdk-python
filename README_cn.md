@@ -6,7 +6,7 @@ LuaSkills 主仓库：[LuaSkills/luaskills](https://github.com/LuaSkills/luaskil
 
 Python SDK，用于通过公共 JSON FFI 接入 LuaSkills 运行时。
 
-SDK 封装了原生动态库加载、JSON FFI buffer、engine 生命周期、正式 skill root、带权限语义的管理调用、skill config、provider callback 与 runtime 资产安装。宿主在常规集成中不需要手写底层 FFI buffer 或 JSON 包络。
+SDK 封装了原生动态库加载、JSON FFI buffer、engine 生命周期、正式 skill root、带权限语义的管理调用、skill config、provider callback、宿主工具 callback 与 runtime 资产安装。宿主在常规集成中不需要手写底层 FFI buffer 或 JSON 包络。
 
 ## 安装
 
@@ -151,12 +151,48 @@ finally:
 
 callback 必须在 `engine_new` 前注册；engine 创建后再切换 callback 不会 retroactive 影响已存在的 engine。
 
+## 宿主工具 Callback
+
+`vulcan.host.*` 使用通过 `luaskills_ffi_set_host_tool_json_callback` 注册的固定宿主工具 callback。请在运行可能调用宿主工具的 skill 前完成注册：
+
+```python
+from luaskills import HostToolJsonRequest, LuaSkillsJsonFfi
+
+# Runtime root used by the host integration.
+# 宿主集成使用的运行时根目录。
+runtime_root = "D:/runtime/luaskills"
+# Low-level FFI bridge that owns callback registration.
+# 持有 callback 注册的底层 FFI 桥。
+ffi = LuaSkillsJsonFfi(runtime_root=runtime_root)
+
+
+def host_tool_callback(request: HostToolJsonRequest):
+    """
+    Handle list, has, and call actions from vulcan.host.*.
+    处理来自 vulcan.host.* 的 list、has 和 call 动作。
+    """
+
+    if request["action"] == "list":
+        return [{"name": "model.embed", "description": "embedding model bridge"}]
+    if request["action"] == "has":
+        return request["tool_name"] == "model.embed"
+    if request["action"] == "call":
+        return {"ok": True, "value": {"request": request["args"]}}
+    return {"ok": False, "error": {"code": "unsupported_action", "message": request["action"]}}
+
+
+ffi.set_host_tool_json_callback(host_tool_callback)
+```
+
+callback 会收到 `{ action, tool_name, args }`。`list` 应返回宿主开放给 Lua 的工具元数据；`has` 应返回 boolean，或带有 `exists` / `has` / `available` 的对象；`call` 应返回一次完整的 table 形态结果。宿主关闭时调用 `ffi.clear_host_tool_json_callback()` 清理注册。该桥接刻意不支持 stream。
+
 ## 示例
 
 wheel 内置可运行示例：
 
 ```bash
 python -m luaskills.examples.basic
+python -m luaskills.examples.host_tool_callback
 python -m luaskills.examples.provider_callback
 ```
 
@@ -166,6 +202,7 @@ python -m luaskills.examples.provider_callback
 luaskills install-runtime --database none --runtime-root .\examples\fixture_runtime
 python .\examples\basic.py
 python .\examples\call.py
+python .\examples\host_tool_callback.py
 python .\examples\query.py
 python .\examples\lifecycle.py
 python .\examples\provider_callback.py

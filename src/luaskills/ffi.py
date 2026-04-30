@@ -10,7 +10,7 @@ import json
 import os
 import threading
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Literal, TypedDict
 
 from .runtime_assets import resolve_luaskills_library_path_from_runtime
 
@@ -39,7 +39,35 @@ class FfiOwnedBuffer(ctypes.Structure):
     ]
 
 
+# Host-side JSON provider callback implemented by SDK callers.
+# 由 SDK 调用方实现的宿主侧 JSON provider callback。
 JsonProviderCallback = Callable[[Any], Any]
+
+# Host-tool bridge action names emitted by vulcan.host.*.
+# vulcan.host.* 发出的宿主工具桥接动作名称。
+HostToolJsonAction = Literal["list", "has", "call"]
+
+
+class HostToolJsonRequest(TypedDict):
+    """
+    Host-tool bridge request delivered to the SDK callback.
+    传递给 SDK callback 的宿主工具桥接请求。
+    """
+
+    # Requested host-tool bridge action.
+    # 请求的宿主工具桥接动作。
+    action: HostToolJsonAction
+    # Optional host tool name for has and call actions.
+    # has 与 call 动作使用的可选宿主工具名称。
+    tool_name: str | None
+    # JSON payload converted from the Lua table argument.
+    # 从 Lua table 参数转换得到的 JSON 载荷。
+    args: Any
+
+
+# Host-side tool bridge JSON callback implemented by SDK callers.
+# 由 SDK 调用方实现的宿主工具桥接 JSON callback。
+HostToolJsonCallback = Callable[[HostToolJsonRequest], Any]
 
 
 JSON_PROVIDER_CALLBACK_TYPE = ctypes.CFUNCTYPE(
@@ -123,6 +151,10 @@ class LuaSkillsJsonFfi:
         self._configure_json_provider_setter("luaskills_ffi_set_sqlite_provider_json_callback")
         self._configure_json_provider_setter("luaskills_ffi_set_lancedb_provider_json_callback")
         self._provider_owner_token = object()
+        self._configured_json_provider_setters = {
+            "luaskills_ffi_set_sqlite_provider_json_callback",
+            "luaskills_ffi_set_lancedb_provider_json_callback",
+        }
 
     def call_json_no_input(self, function_name: str) -> Any:
         """
@@ -176,6 +208,18 @@ class LuaSkillsJsonFfi:
             callback,
         )
 
+    def set_host_tool_json_callback(self, callback: HostToolJsonCallback | None) -> None:
+        """
+        Register or clear the host-tool JSON callback.
+        注册或清理宿主工具 JSON callback。
+        """
+
+        self._set_json_provider_callback(
+            "host-tool",
+            "luaskills_ffi_set_host_tool_json_callback",
+            callback,
+        )
+
     def clear_sqlite_provider_json_callback(self) -> None:
         """
         Clear the SQLite JSON provider callback slot.
@@ -191,6 +235,14 @@ class LuaSkillsJsonFfi:
         """
 
         self.set_lancedb_provider_json_callback(None)
+
+    def clear_host_tool_json_callback(self) -> None:
+        """
+        Clear the host-tool JSON callback slot.
+        清理宿主工具 JSON callback 槽位。
+        """
+
+        self.set_host_tool_json_callback(None)
 
     def _decode_envelope(self, function_name: str, raw_buffer: FfiOwnedBuffer) -> Any:
         """
@@ -218,17 +270,20 @@ class LuaSkillsJsonFfi:
         注册或清理一个具体 JSON provider callback 槽位。
         """
 
-        function = getattr(self.library, function_name)
         slot_key = self._json_provider_slot_key(kind)
         with _JSON_PROVIDER_CALLBACK_LOCK:
             previous_slot = _JSON_PROVIDER_CALLBACK_SLOTS.get(slot_key)
             if callback is None:
                 if previous_slot is None or previous_slot.owner_token is not self._provider_owner_token:
                     return
+                self._ensure_json_provider_setter_configured(function_name)
+                function = getattr(self.library, function_name)
                 self._call_provider_setter(function_name, function, None)
                 _JSON_PROVIDER_CALLBACK_SLOTS.pop(slot_key, None)
                 return
 
+            self._ensure_json_provider_setter_configured(function_name)
+            function = getattr(self.library, function_name)
             callback_wrapper = JSON_PROVIDER_CALLBACK_TYPE(self._make_json_provider_callback(callback))
             self._call_provider_setter(function_name, function, callback_wrapper)
             _JSON_PROVIDER_CALLBACK_SLOTS[slot_key] = JsonProviderSlotState(
@@ -360,6 +415,23 @@ class LuaSkillsJsonFfi:
             ctypes.POINTER(FfiOwnedBuffer),
         ]
         function.restype = ctypes.c_int32
+
+    def _ensure_json_provider_setter_configured(self, function_name: str) -> None:
+        """
+        Lazily configure one JSON provider callback setter when it is first used.
+        在首次使用时惰性配置单个 JSON provider callback setter。
+        """
+
+        if function_name in self._configured_json_provider_setters:
+            return
+        try:
+            self._configure_json_provider_setter(function_name)
+        except AttributeError as exc:
+            raise LuaSkillsError(
+                function_name,
+                f"LuaSkills library does not export {function_name}; update the native runtime before using this callback",
+            ) from exc
+        self._configured_json_provider_setters.add(function_name)
 
     def _json_provider_slot_key(self, kind: str) -> tuple[str, str]:
         """
