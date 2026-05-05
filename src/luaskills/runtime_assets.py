@@ -26,7 +26,7 @@ Default LuaSkills release tag used by SDK runtime installation.
 SDK 运行时安装使用的默认 LuaSkills 发布标签。
 """
 
-DEFAULT_LUASKILLS_PACKAGES_VERSION = "v0.1.5"
+DEFAULT_LUASKILLS_PACKAGES_VERSION = "v0.1.6"
 """
 Default luaskills-packages release tag used by SDK runtime installation.
 SDK 运行时安装使用的默认 luaskills-packages 发布标签。
