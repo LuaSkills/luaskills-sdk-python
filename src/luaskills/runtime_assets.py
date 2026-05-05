@@ -26,6 +26,12 @@ Default LuaSkills release tag used by SDK runtime installation.
 SDK 运行时安装使用的默认 LuaSkills 发布标签。
 """
 
+DEFAULT_LUASKILLS_PACKAGES_VERSION = "v0.1.5"
+"""
+Default luaskills-packages release tag used by SDK runtime installation.
+SDK 运行时安装使用的默认 luaskills-packages 发布标签。
+"""
+
 DEFAULT_VLDB_CONTROLLER_VERSION = "v0.2.1"
 """
 Default vldb-controller release tag used by SDK runtime installation.
@@ -143,8 +149,8 @@ def build_runtime_install_manifest(
         include_luaskills_ffi=include_luaskills_ffi,
         include_lua_runtime=include_lua_runtime,
         luaskills_repo=luaskills_repo,
-        lua_runtime_repo=lua_runtime_repo or luaskills_repo,
-        lua_runtime_version=lua_runtime_version or luaskills_version,
+        lua_runtime_repo=lua_runtime_repo or "LuaSkills/luaskills-packages",
+        lua_runtime_version=lua_runtime_version or DEFAULT_LUASKILLS_PACKAGES_VERSION,
         vldb_controller_repo=vldb_controller_repo,
         vldb_sqlite_repo=vldb_sqlite_repo,
         vldb_lancedb_repo=vldb_lancedb_repo,
@@ -320,7 +326,7 @@ def build_runtime_asset_descriptors(
 
     assets: list[dict[str, Any]] = []
     if include_lua_runtime:
-        asset_name = f"lua-runtime-{target['platform_key']}.tar.gz"
+        asset_name = f"lua-runtime-packages-{target['platform_key']}.tar.gz"
         assets.append(release_asset("lua_runtime", lua_runtime_repo, lua_runtime_version, asset_name, "resources/lua-runtime-manifest.json"))
     if include_luaskills_ffi:
         asset_name = f"luaskills-ffi-sdk-{target['platform_key']}.tar.gz"
@@ -572,7 +578,7 @@ def install_lua_runtime(runtime_root: Path, extract_directory: Path, asset: dict
     copy_directory_if_present(extract_directory / "lua_packages", runtime_root / "lua_packages")
     copy_directory_if_present(extract_directory / "libs", runtime_root / "libs")
     copy_directory_if_present(extract_directory / "resources", runtime_root / "resources")
-    copy_directory_if_present(extract_directory / "licenses", runtime_root / "licenses" / "lua-runtime")
+    copy_directory_if_present(extract_directory / "licenses", runtime_root / "licenses")
     marker_path = runtime_root / "resources" / "lua-runtime-manifest.json"
     if not marker_path.exists():
         raise FileNotFoundError(f"Lua runtime manifest was not found after installing {asset['asset_name']}")

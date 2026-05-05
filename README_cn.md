@@ -42,7 +42,7 @@ runtime_root/resources/luaskills-sdk-runtime-manifest.json
 
 默认 LuaSkills 资产：
 
-- `lua-runtime-{platform}.tar.gz`：默认安装；提供 `lua_packages`、运行时 `libs`、`resources` 与运行时授权材料。
+- `LuaSkills/luaskills-packages` 发布的 `lua-runtime-packages-{platform}.tar.gz`：默认安装；提供 `lua_packages`、packages 侧运行时 `libs`、`resources` 与第三方运行时授权材料。
 - `luaskills-ffi-sdk-{platform}.tar.gz`：默认安装；提供公共 FFI 动态库、头文件与 FFI 授权材料。
 - `lua-deps-{platform}.tar.gz`：SDK 不默认安装；它是 CI、源码构建或高级原生模块重建使用的构建期依赖包。
 
@@ -377,7 +377,7 @@ PYTHONPATH=src python -m luaskills.cli version --runtime-root D:/runtime/luaskil
 
 发布版本记录在 `VERSION`。发布前请保持 `VERSION` 与 `pyproject.toml` 一致。
 
-如果要做生态统一发布，必须先发布同版本的 `LuaSkills/luaskills` GitHub release，确保本 SDK 默认安装器引用的 runtime 资产已经存在。
+如果要做生态统一发布，必须先发布同版本的 `LuaSkills/luaskills` 与匹配的 `LuaSkills/luaskills-packages` GitHub release，确保本 SDK 默认安装器引用的 runtime 资产已经存在。
 
 发布前执行：
 

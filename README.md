@@ -42,7 +42,7 @@ Supported database modes:
 
 Default LuaSkills assets:
 
-- `lua-runtime-{platform}.tar.gz`: installed by default; provides `lua_packages`, runtime `libs`, `resources`, and runtime licenses.
+- `lua-runtime-packages-{platform}.tar.gz` from `LuaSkills/luaskills-packages`: installed by default; provides `lua_packages`, package-side runtime `libs`, `resources`, and third-party runtime licenses.
 - `luaskills-ffi-sdk-{platform}.tar.gz`: installed by default; provides the public FFI dynamic library, headers, and FFI licenses.
 - `lua-deps-{platform}.tar.gz`: not installed by the SDK; it is a build-time bundle for CI, source builds, or advanced native module rebuilds.
 
@@ -377,7 +377,7 @@ PYTHONPATH=src python -m luaskills.cli version --runtime-root D:/runtime/luaskil
 
 The release version is stored in `VERSION`. Keep `VERSION` and `pyproject.toml` aligned before publishing.
 
-For one unified ecosystem release, publish the core repository `LuaSkills/luaskills` under the matching GitHub tag first so the default runtime installer assets for this SDK already exist.
+For one unified ecosystem release, publish `LuaSkills/luaskills` and the matching `LuaSkills/luaskills-packages` release first so the default runtime installer assets for this SDK already exist.
 
 Before publishing:
 
