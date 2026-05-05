@@ -262,9 +262,10 @@ wheel 内置可运行示例：
 python -m luaskills.examples.basic
 python -m luaskills.examples.host_tool_callback
 python -m luaskills.examples.provider_callback
+python -m luaskills.examples.runtime_session
 ```
 
-源码仓库示例还包含 query 与 lifecycle 流程，并带有一个内置 USER 层夹具 skill：
+源码仓库示例还包含 query、lifecycle 与 runtime-session 流程，并带有一个内置 USER 层夹具 skill：
 
 ```powershell
 luaskills install-runtime --database none --runtime-root .\examples\fixture_runtime
@@ -273,12 +274,39 @@ python .\examples\call.py
 python .\examples\host_tool_callback.py
 python .\examples\query.py
 python .\examples\lifecycle.py
+python .\examples\runtime_session.py
 python .\examples\provider_callback.py
 ```
 
 夹具 skill 位于 `examples/fixture_runtime/user_skills/demo-standard-ffi-skill`，因此委托查询示例不需要 System 权限也能看到它。
 
 完整示例索引与 runtime 注意事项见 [examples/README_cn.md](examples/README_cn.md)。英文示例指南见 [examples/README.md](examples/README.md)。
+
+## 持久运行时会话
+
+普通租约入口请使用 `client.runtime_sessions()`；如果宿主希望通过最新原生库提供的专用 system runtime-session 导出固定注入 authority，请使用 `client.system(authority).runtime_sessions()`。
+
+```python
+from luaskills import Authority, LuaSkillsClient
+
+client = LuaSkillsClient(runtime_root="D:/runtime/luaskills")
+
+try:
+    sessions = client.system(Authority.SYSTEM).runtime_sessions()
+    session = sessions.create_handle("demo-session", ttl_sec=600, replace=True)
+    result = session.eval("counter = (counter or 0) + 1; return { counter = counter }")
+    print(result["result"])
+    print(session.status())
+    print(session.close())
+finally:
+    client.close()
+```
+
+## 迁移说明
+
+- 现有 `client.system(authority)` 生命周期调用保持兼容；返回的 wrapper 现在额外暴露查询辅助方法和 `runtime_sessions()`。
+- `RuntimeSessionHandle` 会持久化 `lease_id + sid + generation`，并在 `eval`、`status`、`close` 时自动补回身份护栏。
+- `client.system(authority).runtime_sessions()` 依赖最新原生库提供的专用 `luaskills_ffi_system_runtime_session_*` 导出；如果这组导出缺失，会立即报错而不是静默降级。
 
 ## 权限与管理
 
@@ -349,6 +377,8 @@ PYTHONPATH=src python -m luaskills.cli version --runtime-root D:/runtime/luaskil
 
 发布版本记录在 `VERSION`。发布前请保持 `VERSION` 与 `pyproject.toml` 一致。
 
+如果要做生态统一发布，必须先发布同版本的 `LuaSkills/luaskills` GitHub release，确保本 SDK 默认安装器引用的 runtime 资产已经存在。
+
 发布前执行：
 
 ```bash
@@ -357,6 +387,8 @@ twine check dist/*
 ```
 
 每次 PyPI publish 都必须使用新的 patch 版本；已发布版本不能覆盖。
+
+推荐统一发布顺序：`luaskills` 核心仓库 -> TypeScript SDK -> Python SDK -> Go SDK -> 各 SDK 的 examples release。
 
 PyPI 发布成功后，手动运行 GitHub Actions 里的 **Examples Release** 工作流。它会读取 `VERSION`，从 PyPI 安装 `luaskills-sdk=={VERSION}`，安装 LuaSkills runtime 资产，运行示例冒烟测试，然后创建或更新 `examples-v{VERSION}` GitHub Release，并上传：
 

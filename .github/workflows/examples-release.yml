@@ -63,6 +63,7 @@ jobs:
           luaskills install-runtime --database none --runtime-root examples/fixture_runtime
           python examples/basic.py
           python examples/query.py
+          python examples/runtime_session.py
           \`\`\`
 
           Main repository: https://github.com/LuaSkills/luaskills
@@ -93,6 +94,7 @@ jobs:
           python examples/query.py
           python examples/call.py
           python examples/lifecycle.py
+          python examples/runtime_session.py
           python examples/provider_callback.py
 
       - name: Package examples asset
@@ -123,7 +125,7 @@ jobs:
 
           This release contains a standalone examples package for the published PyPI package \`luaskills-sdk==$VERSION\`.
 
-          The package was smoke-tested by installing the published SDK, installing LuaSkills runtime assets, and running the bundled examples.
+          The package was smoke-tested by installing the published SDK, installing LuaSkills runtime assets, and running the bundled examples, including the persistent runtime-session flow.
 
           Main repository: https://github.com/LuaSkills/luaskills
 
@@ -131,7 +133,7 @@ jobs:
 
           本 Release 包含面向已发布 PyPI 包 \`luaskills-sdk==$VERSION\` 的独立示例包。
 
-          工作流已通过安装正式 SDK、安装 LuaSkills runtime 资产并运行内置示例完成冒烟验证。
+          工作流已通过安装正式 SDK、安装 LuaSkills runtime 资产并运行内置示例完成冒烟验证，其中包含持久 runtime-session 流程。
           MARKDOWN
 
       - name: Publish GitHub Release

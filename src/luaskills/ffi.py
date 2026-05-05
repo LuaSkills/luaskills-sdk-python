@@ -322,6 +322,7 @@ class LuaSkillsJsonFfi:
             "luaskills_ffi_set_sqlite_provider_json_callback",
             "luaskills_ffi_set_lancedb_provider_json_callback",
         }
+        self._describe_cache: dict[str, Any] | None = None
 
     def call_json_no_input(self, function_name: str) -> Any:
         """
@@ -350,6 +351,19 @@ class LuaSkillsJsonFfi:
             len=len(payload_bytes),
         )
         return self._decode_envelope(function_name, function(borrowed))
+
+    def describe(self) -> dict[str, Any]:
+        """
+        Read and cache the exported JSON FFI descriptor payload for diagnostics.
+        读取并缓存已导出 JSON FFI 描述载荷，供诊断使用。
+        """
+
+        if self._describe_cache is None:
+            result = self.call_json_no_input("luaskills_ffi_describe_json")
+            if not isinstance(result, dict):
+                raise LuaSkillsError("luaskills_ffi_describe_json", "describe payload must be one object")
+            self._describe_cache = result
+        return self._describe_cache
 
     def set_sqlite_provider_json_callback(self, callback: JsonProviderCallback | None) -> None:
         """

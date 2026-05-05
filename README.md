@@ -262,6 +262,7 @@ The wheel includes runnable examples:
 python -m luaskills.examples.basic
 python -m luaskills.examples.host_tool_callback
 python -m luaskills.examples.provider_callback
+python -m luaskills.examples.runtime_session
 ```
 
 Source-tree examples include query and lifecycle flows with a bundled USER-layer fixture skill:
@@ -273,12 +274,39 @@ python .\examples\call.py
 python .\examples\host_tool_callback.py
 python .\examples\query.py
 python .\examples\lifecycle.py
+python .\examples\runtime_session.py
 python .\examples\provider_callback.py
 ```
 
 The fixture skill lives at `examples/fixture_runtime/user_skills/demo-standard-ffi-skill`, so delegated-query examples can see it without System authority.
 
 See [examples/README.md](examples/README.md) for the full example index and runtime notes. The Chinese example guide is [examples/README_cn.md](examples/README_cn.md).
+
+## Persistent Runtime Sessions
+
+Use `client.runtime_sessions()` for the public lease endpoints, or `client.system(authority).runtime_sessions()` when the host wants fixed authority injection through the dedicated system runtime-session exports provided by the latest native library.
+
+```python
+from luaskills import Authority, LuaSkillsClient
+
+client = LuaSkillsClient(runtime_root="D:/runtime/luaskills")
+
+try:
+    sessions = client.system(Authority.SYSTEM).runtime_sessions()
+    session = sessions.create_handle("demo-session", ttl_sec=600, replace=True)
+    result = session.eval("counter = (counter or 0) + 1; return { counter = counter }")
+    print(result["result"])
+    print(session.status())
+    print(session.close())
+finally:
+    client.close()
+```
+
+## Migration Notes
+
+- Existing `client.system(authority)` lifecycle calls keep working; the returned wrapper now also exposes query helpers and `runtime_sessions()`.
+- `RuntimeSessionHandle` persists `lease_id + sid + generation` and automatically reattaches identity guards on `eval`, `status`, and `close`.
+- `client.system(authority).runtime_sessions()` requires the dedicated `luaskills_ffi_system_runtime_session_*` exports from the latest native library and fails fast when they are missing.
 
 ## Authority And Management
 
@@ -349,6 +377,8 @@ PYTHONPATH=src python -m luaskills.cli version --runtime-root D:/runtime/luaskil
 
 The release version is stored in `VERSION`. Keep `VERSION` and `pyproject.toml` aligned before publishing.
 
+For one unified ecosystem release, publish the core repository `LuaSkills/luaskills` under the matching GitHub tag first so the default runtime installer assets for this SDK already exist.
+
 Before publishing:
 
 ```bash
@@ -357,6 +387,8 @@ twine check dist/*
 ```
 
 Use a new patch version for every PyPI publish. Published versions cannot be overwritten.
+
+Recommended unified publish order: `luaskills` core release -> TypeScript SDK -> Python SDK -> Go SDK -> SDK examples releases.
 
 After PyPI publishes successfully, run the GitHub Actions workflow **Examples Release** manually. It reads `VERSION`, installs `luaskills-sdk=={VERSION}` from PyPI, installs LuaSkills runtime assets, runs the examples, then creates or updates the `examples-v{VERSION}` GitHub Release with:
 

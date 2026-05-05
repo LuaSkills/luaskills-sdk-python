@@ -5,6 +5,8 @@ Python SDK for integrating LuaSkills through the public JSON FFI surface.
 
 from .client import (
     LuaSkillsClient,
+    RuntimeSessionClient,
+    RuntimeSessionHandle,
     SkillConfigClient,
     SkillManagementClient,
     SystemSkillManagementClient,
@@ -60,6 +62,8 @@ __all__ = [
     "LuaSkillsJsonFfi",
     "ModelEmbedJsonCallback",
     "ModelLlmJsonCallback",
+    "RuntimeSessionClient",
+    "RuntimeSessionHandle",
     "RuntimeRoots",
     "RuntimeSkillRoot",
     "RuntimeDatabasePreset",
