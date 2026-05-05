@@ -26,10 +26,10 @@ Default LuaSkills release tag used by SDK runtime installation.
 SDK 运行时安装使用的默认 LuaSkills 发布标签。
 """
 
-DEFAULT_LUASKILLS_PACKAGES_VERSION = "v0.1.6"
+DEFAULT_LUASKILLS_PACKAGES_SERIES = "0.1"
 """
-Default luaskills-packages release tag used by SDK runtime installation.
-SDK 运行时安装使用的默认 luaskills-packages 发布标签。
+Default luaskills-packages release series used by SDK runtime installation.
+SDK 运行时安装使用的默认 luaskills-packages 发布协议线。
 """
 
 DEFAULT_VLDB_CONTROLLER_VERSION = "v0.2.1"
@@ -120,6 +120,7 @@ def build_runtime_install_manifest(
     database: RuntimeDatabasePreset | str = RuntimeDatabasePreset.NONE,
     luaskills_version: str = DEFAULT_LUASKILLS_VERSION,
     lua_runtime_version: str | None = None,
+    lua_runtime_series: str = DEFAULT_LUASKILLS_PACKAGES_SERIES,
     vldb_controller_version: str = DEFAULT_VLDB_CONTROLLER_VERSION,
     vldb_sqlite_version: str = DEFAULT_VLDB_SQLITE_VERSION,
     vldb_lancedb_version: str = DEFAULT_VLDB_LANCEDB_VERSION,
@@ -139,6 +140,10 @@ def build_runtime_install_manifest(
     resolved_root = Path(runtime_root).expanduser().resolve()
     preset = normalize_database_preset(database)
     target = resolve_runtime_platform_target()
+    resolved_lua_runtime_version = lua_runtime_version or resolve_release_tag_for_series(
+        lua_runtime_repo or "LuaSkills/luaskills-packages",
+        lua_runtime_series,
+    )
     assets = build_runtime_asset_descriptors(
         target=target,
         database=preset,
@@ -150,7 +155,7 @@ def build_runtime_install_manifest(
         include_lua_runtime=include_lua_runtime,
         luaskills_repo=luaskills_repo,
         lua_runtime_repo=lua_runtime_repo or "LuaSkills/luaskills-packages",
-        lua_runtime_version=lua_runtime_version or DEFAULT_LUASKILLS_PACKAGES_VERSION,
+        lua_runtime_version=resolved_lua_runtime_version,
         vldb_controller_repo=vldb_controller_repo,
         vldb_sqlite_repo=vldb_sqlite_repo,
         vldb_lancedb_repo=vldb_lancedb_repo,
@@ -359,6 +364,59 @@ def release_asset(role: str, repository: str, version: str, asset_name: str, ins
         "sha256_url": f"{base_url}.sha256",
         "installed_path": installed_path,
     }
+
+
+def resolve_release_tag_for_series(repository: str, series: str) -> str:
+    """
+    Resolve the newest published release tag inside one semantic-version series.
+    解析单个语义化版本协议线中的最新已发布标签。
+    """
+
+    try:
+        major_text, minor_text = series.split(".", 1)
+        major = int(major_text)
+        minor = int(minor_text)
+    except ValueError as error:
+        raise ValueError(f"invalid release series: {series}") from error
+    request = urllib.request.Request(
+        f"https://api.github.com/repos/{repository}/releases?per_page=100",
+        headers={
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "luaskills-sdk-python",
+        },
+    )
+    with urllib.request.urlopen(request) as response:
+        releases = json.loads(response.read().decode("utf-8"))
+    candidates: list[tuple[int, str]] = []
+    for release in releases:
+        if release.get("draft") or release.get("prerelease"):
+            continue
+        parsed = parse_release_semver(str(release.get("tag_name") or ""))
+        if parsed is None:
+            continue
+        parsed_major, parsed_minor, parsed_patch = parsed
+        if parsed_major == major and parsed_minor == minor:
+            candidates.append((parsed_patch, str(release["tag_name"])))
+    if not candidates:
+        raise ValueError(f"no published release found in series {series} for {repository}")
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    return candidates[0][1]
+
+
+def parse_release_semver(tag: str) -> tuple[int, int, int] | None:
+    """
+    Parse one release tag into a semantic-version tuple when supported.
+    将单个发布标签解析为受支持的语义化版本元组。
+    """
+
+    normalized = tag[1:] if tag.startswith("v") else tag
+    parts = normalized.split(".")
+    if len(parts) != 3:
+        return None
+    try:
+        return int(parts[0]), int(parts[1]), int(parts[2])
+    except ValueError:
+        return None
 
 
 def build_host_options_patch(runtime_root: str | os.PathLike[str], database: RuntimeDatabasePreset, target: dict[str, str], assets: list[dict[str, Any]]) -> dict[str, Any]:
