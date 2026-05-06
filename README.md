@@ -46,6 +46,8 @@ Default LuaSkills assets:
 - `luaskills-ffi-sdk-{platform}.tar.gz`: installed by default; provides the public FFI dynamic library, headers, and FFI licenses.
 - `lua-deps-{platform}.tar.gz`: not installed by the SDK; it is a build-time bundle for CI, source builds, or advanced native module rebuilds.
 
+The SDK keeps LuaSkills core aligned with the SDK release and resolves runtime packages from the compatible `0.1` series by selecting the newest published patch automatically.
+
 ```powershell
 luaskills install-runtime --database none --runtime-root D:\runtime\luaskills
 luaskills install-runtime --database vldb-direct --runtime-root D:\runtime\luaskills
@@ -357,7 +359,7 @@ luaskills version --runtime-root D:\runtime\luaskills
 
 ### Lua modules are missing at runtime
 
-If a skill fails with Lua module loading errors, make sure `install-runtime` was run without `--skip-lua-runtime` and that `runtime_root/lua_packages` exists.
+If a skill fails with Lua module loading errors, make sure `install-runtime` was run without `--skip-lua-runtime` and that `runtime_root/lua_packages` exists. The default installer uses `LuaSkills/luaskills-packages` runtime packages specifically to satisfy these Lua-side dependencies.
 
 ```powershell
 luaskills install-runtime --database none --runtime-root D:\runtime\luaskills
@@ -377,7 +379,7 @@ PYTHONPATH=src python -m luaskills.cli version --runtime-root D:/runtime/luaskil
 
 The release version is stored in `VERSION`. Keep `VERSION` and `pyproject.toml` aligned before publishing.
 
-For one unified ecosystem release, publish `LuaSkills/luaskills` and the matching `LuaSkills/luaskills-packages` release first so the default runtime installer assets for this SDK already exist.
+For one unified ecosystem release, publish `LuaSkills/luaskills-packages` first, then publish `LuaSkills/luaskills`, so the default runtime installer assets for this SDK already exist.
 
 Before publishing:
 
@@ -388,7 +390,7 @@ twine check dist/*
 
 Use a new patch version for every PyPI publish. Published versions cannot be overwritten.
 
-Recommended unified publish order: `luaskills` core release -> TypeScript SDK -> Python SDK -> Go SDK -> SDK examples releases.
+Recommended unified publish order: `luaskills-packages` -> `luaskills` core release -> TypeScript SDK -> Python SDK -> Go SDK -> SDK examples releases.
 
 After PyPI publishes successfully, run the GitHub Actions workflow **Examples Release** manually. It reads `VERSION`, installs `luaskills-sdk=={VERSION}` from PyPI, installs LuaSkills runtime assets, runs the examples, then creates or updates the `examples-v{VERSION}` GitHub Release with:
 

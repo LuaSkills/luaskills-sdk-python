@@ -46,6 +46,8 @@ runtime_root/resources/luaskills-sdk-runtime-manifest.json
 - `luaskills-ffi-sdk-{platform}.tar.gz`：默认安装；提供公共 FFI 动态库、头文件与 FFI 授权材料。
 - `lua-deps-{platform}.tar.gz`：SDK 不默认安装；它是 CI、源码构建或高级原生模块重建使用的构建期依赖包。
 
+默认情况下，SDK 会把 LuaSkills core 固定到自身对应版本，并从兼容的 `0.1` 协议线中自动解析最新已发布的 runtime packages patch 版本。
+
 ```powershell
 luaskills install-runtime --database none --runtime-root D:\runtime\luaskills
 luaskills install-runtime --database vldb-direct --runtime-root D:\runtime\luaskills
@@ -357,7 +359,7 @@ luaskills version --runtime-root D:\runtime\luaskills
 
 ### 运行时缺少 Lua 模块
 
-如果 skill 运行时出现 Lua 模块加载错误，请确认运行 `install-runtime` 时没有使用 `--skip-lua-runtime`，并且 `runtime_root/lua_packages` 存在。
+如果 skill 运行时出现 Lua 模块加载错误，请确认运行 `install-runtime` 时没有使用 `--skip-lua-runtime`，并且 `runtime_root/lua_packages` 存在。默认安装器正是通过 `LuaSkills/luaskills-packages` 的 runtime packages 来满足这部分 Lua 侧依赖。
 
 ```powershell
 luaskills install-runtime --database none --runtime-root D:\runtime\luaskills
@@ -377,7 +379,7 @@ PYTHONPATH=src python -m luaskills.cli version --runtime-root D:/runtime/luaskil
 
 发布版本记录在 `VERSION`。发布前请保持 `VERSION` 与 `pyproject.toml` 一致。
 
-如果要做生态统一发布，必须先发布同版本的 `LuaSkills/luaskills` 与匹配的 `LuaSkills/luaskills-packages` GitHub release，确保本 SDK 默认安装器引用的 runtime 资产已经存在。
+如果要做生态统一发布，必须先发布 `LuaSkills/luaskills-packages`，再发布 `LuaSkills/luaskills`，确保本 SDK 默认安装器引用的 runtime 资产已经存在。
 
 发布前执行：
 
@@ -388,7 +390,7 @@ twine check dist/*
 
 每次 PyPI publish 都必须使用新的 patch 版本；已发布版本不能覆盖。
 
-推荐统一发布顺序：`luaskills` 核心仓库 -> TypeScript SDK -> Python SDK -> Go SDK -> 各 SDK 的 examples release。
+推荐统一发布顺序：`luaskills-packages` -> `luaskills` 核心仓库 -> TypeScript SDK -> Python SDK -> Go SDK -> 各 SDK 的 examples release。
 
 PyPI 发布成功后，手动运行 GitHub Actions 里的 **Examples Release** 工作流。它会读取 `VERSION`，从 PyPI 安装 `luaskills-sdk=={VERSION}`，安装 LuaSkills runtime 资产，运行示例冒烟测试，然后创建或更新 `examples-v{VERSION}` GitHub Release，并上传：
 
