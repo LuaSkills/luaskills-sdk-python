@@ -52,10 +52,10 @@ python .\examples\host_tool_callback.py
 python .\examples\lifecycle.py
 ```
 
-`runtime_session.py` 演示一个持久运行时租约、绑定 authority 的 system 查询，以及复用同一个交互式子进程句柄的连续 `eval` 调用。
+`runtime_lease.py` 演示一个持久运行时租约、绑定 authority 的 system 查询，以及复用同一个交互式子进程句柄的连续 `eval` 调用。
 
 ```powershell
-python .\examples\runtime_session.py
+python .\examples\runtime_lease.py
 ```
 
 `provider_callback.py` 演示在 engine 创建前注册 JSON SQLite provider callback。
@@ -74,7 +74,7 @@ wheel 也内置模块示例，便于快速烟测：
 python -m luaskills.examples.basic
 python -m luaskills.examples.host_tool_callback
 python -m luaskills.examples.provider_callback
-python -m luaskills.examples.runtime_session
+python -m luaskills.examples.runtime_lease
 ```
 
 ## Fixture Skill

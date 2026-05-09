@@ -1,6 +1,6 @@
 """
-Python SDK persistent runtime-session example shipped with the wheel.
-随 wheel 分发的 Python SDK 持久运行时会话示例。
+Python SDK persistent runtime-lease example shipped with the wheel.
+随 wheel 分发的 Python SDK 持久运行时租约示例。
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ from pathlib import Path
 from luaskills import LuaSkillsClient
 
 
-RUNTIME_SESSION_SID = "python-wheel-runtime-session-demo"
+RUNTIME_SESSION_SID = "python-wheel-runtime-lease-demo"
 
 
 def resolve_runtime_root() -> Path:
@@ -43,8 +43,14 @@ def main() -> None:
     library_path = resolve_library_path()
 
     with LuaSkillsClient(library_path=library_path, runtime_root=runtime_root) as client:
-        sessions = client.runtime_sessions()
-        session = sessions.create_handle(RUNTIME_SESSION_SID, ttl_sec=600, replace=True)
+        sessions = client.runtime_leases()
+        session = sessions.create_handle(
+            RUNTIME_SESSION_SID,
+            ttl_sec=600,
+            replace=True,
+            cwd=str(runtime_root / "system_lua_lib"),
+            mounts={"example": "python-wheel-runtime-lease"},
+        )
         identity = session.identity_payload()
         print("Lease created:", identity["lease_id"])
 

@@ -273,10 +273,10 @@ wheel 内置可运行示例：
 python -m luaskills.examples.basic
 python -m luaskills.examples.host_tool_callback
 python -m luaskills.examples.provider_callback
-python -m luaskills.examples.runtime_session
+python -m luaskills.examples.runtime_lease
 ```
 
-源码仓库示例还包含 query、lifecycle 与 runtime-session 流程，并带有一个内置 USER 层夹具 skill：
+源码仓库示例还包含 query、lifecycle 与持久 runtime-lease 流程，并带有一个内置 USER 层夹具 skill：
 
 ```powershell
 luaskills install-runtime --database none --runtime-root .\examples\fixture_runtime
@@ -285,7 +285,7 @@ python .\examples\call.py
 python .\examples\host_tool_callback.py
 python .\examples\query.py
 python .\examples\lifecycle.py
-python .\examples\runtime_session.py
+python .\examples\runtime_lease.py
 python .\examples\provider_callback.py
 ```
 
@@ -293,9 +293,9 @@ python .\examples\provider_callback.py
 
 完整示例索引与 runtime 注意事项见 [examples/README_cn.md](examples/README_cn.md)。英文示例指南见 [examples/README.md](examples/README.md)。
 
-## 持久运行时会话
+## 持久运行时租约
 
-普通租约入口请使用 `client.runtime_sessions()`；如果宿主希望通过最新原生库提供的专用 system runtime-session 导出固定注入 authority，请使用 `client.system(authority).runtime_sessions()`。
+普通租约入口请使用 `client.runtime_leases()`；如果宿主希望通过最新原生库提供的专用 system runtime-lease 导出固定注入 authority，请使用 `client.system(authority).runtime_leases()`。
 
 ```python
 from luaskills import Authority, LuaSkillsClient
@@ -303,8 +303,14 @@ from luaskills import Authority, LuaSkillsClient
 client = LuaSkillsClient(runtime_root="D:/runtime/luaskills")
 
 try:
-    sessions = client.system(Authority.SYSTEM).runtime_sessions()
-    session = sessions.create_handle("demo-session", ttl_sec=600, replace=True)
+    leases = client.system(Authority.SYSTEM).runtime_leases()
+    session = leases.create_handle(
+        "demo-session",
+        ttl_sec=600,
+        replace=True,
+        cwd="D:/runtime/luaskills/system_lua_lib",
+        mounts={"channel": "demo"},
+    )
     result = session.eval("counter = (counter or 0) + 1; return { counter = counter }")
     print(result["result"])
     print(session.status())
@@ -315,9 +321,11 @@ finally:
 
 ## 迁移说明
 
-- 现有 `client.system(authority)` 生命周期调用保持兼容；返回的 wrapper 现在额外暴露查询辅助方法和 `runtime_sessions()`。
-- `RuntimeSessionHandle` 会持久化 `lease_id + sid + generation`，并在 `eval`、`status`、`close` 时自动补回身份护栏。
-- `client.system(authority).runtime_sessions()` 依赖最新原生库提供的专用 `luaskills_ffi_system_runtime_session_*` 导出；如果这组导出缺失，会立即报错而不是静默降级。
+- 现有 `client.system(authority)` 生命周期调用保持兼容；返回的 wrapper 现在额外暴露查询辅助方法和 `runtime_leases()`。
+- `RuntimeLeaseHandle` 会持久化 `lease_id + sid + generation`，并在 `eval`、`status`、`close` 时自动补回身份护栏。
+- `client.system(authority).runtime_leases()` 依赖最新原生库提供的专用 `luaskills_ffi_system_runtime_lease_*` 导出；如果这组导出缺失，会立即报错而不是静默降级。
+- 当宿主在 `request_context.client_capabilities.host_result` 中显式开启结构化结果后，`call_skill()` 会返回独立的 `host_result` 字段，供 IDE 原生结构化结果消费。
+- `runtime_leases().create()` 与 `create_handle()` 现在支持 `cwd`、`workspace_root`、`lua_roots`、`c_roots`、`mounts` 等宿主路径选项。
 
 ## 权限与管理
 

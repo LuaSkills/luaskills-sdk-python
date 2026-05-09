@@ -273,10 +273,10 @@ The wheel includes runnable examples:
 python -m luaskills.examples.basic
 python -m luaskills.examples.host_tool_callback
 python -m luaskills.examples.provider_callback
-python -m luaskills.examples.runtime_session
+python -m luaskills.examples.runtime_lease
 ```
 
-Source-tree examples include query and lifecycle flows with a bundled USER-layer fixture skill:
+Source-tree examples include query, lifecycle, and persistent runtime-lease flows with a bundled USER-layer fixture skill:
 
 ```powershell
 luaskills install-runtime --database none --runtime-root .\examples\fixture_runtime
@@ -285,7 +285,7 @@ python .\examples\call.py
 python .\examples\host_tool_callback.py
 python .\examples\query.py
 python .\examples\lifecycle.py
-python .\examples\runtime_session.py
+python .\examples\runtime_lease.py
 python .\examples\provider_callback.py
 ```
 
@@ -293,9 +293,9 @@ The fixture skill lives at `examples/fixture_runtime/user_skills/demo-standard-f
 
 See [examples/README.md](examples/README.md) for the full example index and runtime notes. The Chinese example guide is [examples/README_cn.md](examples/README_cn.md).
 
-## Persistent Runtime Sessions
+## Persistent Runtime Leases
 
-Use `client.runtime_sessions()` for the public lease endpoints, or `client.system(authority).runtime_sessions()` when the host wants fixed authority injection through the dedicated system runtime-session exports provided by the latest native library.
+Use `client.runtime_leases()` for the public lease endpoints, or `client.system(authority).runtime_leases()` when the host wants fixed authority injection through the dedicated system runtime-lease exports provided by the latest native library.
 
 ```python
 from luaskills import Authority, LuaSkillsClient
@@ -303,8 +303,14 @@ from luaskills import Authority, LuaSkillsClient
 client = LuaSkillsClient(runtime_root="D:/runtime/luaskills")
 
 try:
-    sessions = client.system(Authority.SYSTEM).runtime_sessions()
-    session = sessions.create_handle("demo-session", ttl_sec=600, replace=True)
+    leases = client.system(Authority.SYSTEM).runtime_leases()
+    session = leases.create_handle(
+        "demo-session",
+        ttl_sec=600,
+        replace=True,
+        cwd="D:/runtime/luaskills/system_lua_lib",
+        mounts={"channel": "demo"},
+    )
     result = session.eval("counter = (counter or 0) + 1; return { counter = counter }")
     print(result["result"])
     print(session.status())
@@ -315,9 +321,11 @@ finally:
 
 ## Migration Notes
 
-- Existing `client.system(authority)` lifecycle calls keep working; the returned wrapper now also exposes query helpers and `runtime_sessions()`.
-- `RuntimeSessionHandle` persists `lease_id + sid + generation` and automatically reattaches identity guards on `eval`, `status`, and `close`.
-- `client.system(authority).runtime_sessions()` requires the dedicated `luaskills_ffi_system_runtime_session_*` exports from the latest native library and fails fast when they are missing.
+- Existing `client.system(authority)` lifecycle calls keep working; the returned wrapper now also exposes query helpers and `runtime_leases()`.
+- `RuntimeLeaseHandle` persists `lease_id + sid + generation` and automatically reattaches identity guards on `eval`, `status`, and `close`.
+- `client.system(authority).runtime_leases()` requires the dedicated `luaskills_ffi_system_runtime_lease_*` exports from the latest native library and fails fast when they are missing.
+- When the host explicitly enables `request_context.client_capabilities.host_result`, `call_skill()` returns one independent `host_result` field for IDE-native structured results.
+- `runtime_leases().create()` and `create_handle()` accept host-owned path options such as `cwd`, `workspace_root`, `lua_roots`, `c_roots`, and `mounts`.
 
 ## Authority And Management
 

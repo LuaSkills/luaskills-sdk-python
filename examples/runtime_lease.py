@@ -1,6 +1,6 @@
 """
-Python SDK runtime-session example using one persistent lease and one interactive child process.
-使用持久租约与交互式子进程的 Python SDK runtime-session 示例。
+Python SDK runtime-lease example using one persistent lease and one interactive child process.
+使用持久租约与交互式子进程的 Python SDK runtime-lease 示例。
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ from pathlib import Path
 from luaskills import Authority, LuaSkillsClient, RuntimeRoots
 
 
-RUNTIME_SESSION_SID = "python-sdk-runtime-session-demo"
+RUNTIME_SESSION_SID = "python-sdk-runtime-lease-demo"
 
 
 def resolve_runtime_root() -> Path:
@@ -35,8 +35,8 @@ def resolve_library_path() -> Path | None:
 
 def main() -> None:
     """
-    Run one persistent runtime-session smoke flow through the high-level SDK surface.
-    通过高级 SDK 接口执行一条持久运行时会话烟测链路。
+    Run one persistent runtime-lease smoke flow through the high-level SDK surface.
+    通过高级 SDK 接口执行一条持久运行时租约烟测链路。
     """
 
     runtime_root = resolve_runtime_root()
@@ -52,13 +52,19 @@ def main() -> None:
             system.skill_name_for_tool("demo-standard-ffi-skill-ping"),
         )
 
-        sessions = system.runtime_sessions()
+        sessions = system.runtime_leases()
         print(
-            "Uses dedicated system runtime-session endpoints:",
-            sessions.uses_system_runtime_session_endpoints(),
+            "Uses dedicated system runtime-lease endpoints:",
+            sessions.uses_system_runtime_lease_endpoints(),
         )
 
-        session = sessions.create_handle(RUNTIME_SESSION_SID, ttl_sec=600, replace=True)
+        session = sessions.create_handle(
+            RUNTIME_SESSION_SID,
+            ttl_sec=600,
+            replace=True,
+            cwd=str(runtime_root / "system_lua_lib"),
+            mounts={"example": "python-runtime-lease"},
+        )
         identity = session.identity_payload()
         print("Lease created:", identity["lease_id"])
         print("Lease handle count:", len(sessions.list_handles(RUNTIME_SESSION_SID)))
@@ -84,14 +90,14 @@ if not proc then
   proc = vulcan.process.session.open(spec)
 end
 counter = (counter or 0) + 1
-proc:write((args.input or "runtime-session-demo") .. "\\n")
+proc:write((args.input or "runtime-lease-demo") .. "\\n")
 return {
   opened = true,
   counter = counter,
   input = args.input,
 }
 """,
-            args={"input": "runtime-session-demo"},
+            args={"input": "runtime-lease-demo"},
         )
         print("Open eval result:", opened["result"])
 

@@ -52,10 +52,10 @@ python .\examples\host_tool_callback.py
 python .\examples\lifecycle.py
 ```
 
-`runtime_session.py` demonstrates one persistent runtime lease, authority-bound system queries, and repeated `eval` calls that reuse one interactive child-process handle.
+`runtime_lease.py` demonstrates one persistent runtime lease, authority-bound system queries, and repeated `eval` calls that reuse one interactive child-process handle.
 
 ```powershell
-python .\examples\runtime_session.py
+python .\examples\runtime_lease.py
 ```
 
 `provider_callback.py` registers a JSON SQLite provider callback before engine creation.
@@ -74,7 +74,7 @@ The wheel also ships module examples for quick smoke tests:
 python -m luaskills.examples.basic
 python -m luaskills.examples.host_tool_callback
 python -m luaskills.examples.provider_callback
-python -m luaskills.examples.runtime_session
+python -m luaskills.examples.runtime_lease
 ```
 
 ## Fixture Skill

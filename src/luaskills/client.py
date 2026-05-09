@@ -14,8 +14,8 @@ from .roots import RuntimeRoots, normalized_path
 from .runtime_assets import host_options_from_runtime_manifest, load_runtime_install_manifest
 from .types import Authority, JsonValue, LuaInvocationContext, RuntimeSkillRoot, authority_value, roots_to_json
 
-# Generic JSON object payload used by runtime-session and system helpers.
-# 运行时会话与 system 辅助器使用的通用 JSON 对象载荷。
+# Generic JSON object payload used by runtime-lease and system helpers.
+# 运行时租约与 system 辅助器使用的通用 JSON 对象载荷。
 JsonMap = dict[str, JsonValue]
 
 
@@ -101,13 +101,13 @@ class LuaSkillsClient:
 
         return SystemSkillManagementClient(self, authority)
 
-    def runtime_sessions(self) -> "RuntimeSessionClient":
+    def runtime_leases(self) -> "RuntimeLeaseClient":
         """
-        Return one runtime-session namespace over the public JSON FFI surface.
-        返回一个基于公共 JSON FFI 接口的运行时会话命名空间。
+        Return one runtime-lease namespace over the public JSON FFI surface.
+        返回一个基于公共 JSON FFI 接口的运行时租约命名空间。
         """
 
-        return RuntimeSessionClient(self)
+        return RuntimeLeaseClient(self)
 
     def load_from_roots(self, skill_roots: list[RuntimeSkillRoot | dict[str, str]]) -> dict[str, Any]:
         """
@@ -500,13 +500,13 @@ class SystemSkillManagementClient(SkillManagementClient):
 
         return self.client._call(function_name, self._with_engine_authority(payload or {}))
 
-    def runtime_sessions(self) -> "RuntimeSessionClient":
+    def runtime_leases(self) -> "RuntimeLeaseClient":
         """
-        Return one authority-bound runtime-session namespace.
-        返回一个绑定 authority 的运行时会话命名空间。
+        Return one authority-bound runtime-lease namespace.
+        返回一个绑定 authority 的运行时租约命名空间。
         """
 
-        return RuntimeSessionClient(self.client, authority=self.authority)
+        return RuntimeLeaseClient(self.client, authority=self.authority)
 
     def list_entries(self) -> list[dict[str, Any]]:
         """
@@ -618,10 +618,10 @@ class SystemSkillManagementClient(SkillManagementClient):
         }
 
 
-class RuntimeSessionClient:
+class RuntimeLeaseClient:
     """
-    Stateful runtime-session namespace over the JSON FFI runtime-session entrypoints.
-    覆盖 JSON FFI 运行时会话入口的有状态运行时会话命名空间。
+    Stateful runtime-lease namespace over the JSON FFI runtime-lease entrypoints.
+    覆盖 JSON FFI 运行时租约入口的有状态运行时租约命名空间。
     """
 
     def __init__(
@@ -630,8 +630,8 @@ class RuntimeSessionClient:
         authority: Authority | str | None = None,
     ) -> None:
         """
-        Create one runtime-session namespace for a parent SDK client.
-        为父级 SDK 客户端创建一个运行时会话命名空间。
+        Create one runtime-lease namespace for a parent SDK client.
+        为父级 SDK 客户端创建一个运行时租约命名空间。
         """
 
         self.client = client
@@ -639,8 +639,8 @@ class RuntimeSessionClient:
 
     def call_raw(self, action: str, payload: JsonMap) -> JsonMap:
         """
-        Dispatch one raw runtime-session JSON request without applying success checks.
-        分发单个原始运行时会话 JSON 请求而不附加成功校验。
+        Dispatch one raw runtime-lease JSON request without applying success checks.
+        分发单个原始运行时租约 JSON 请求而不附加成功校验。
         """
 
         request_payload: JsonMap = {
@@ -650,48 +650,86 @@ class RuntimeSessionClient:
         if self.authority is not None:
             request_payload["authority"] = authority_value(self.authority)
         return require_json_map(
-            self.client._call(self._runtime_session_function_name(action), request_payload),
-            f"runtime session {action} result",
+            self.client._call(self._runtime_lease_function_name(action), request_payload),
+            f"runtime lease {action} result",
         )
 
-    def create(self, sid: str, ttl_sec: int = 600, replace: bool = False) -> JsonMap:
+    def create(
+        self,
+        sid: str,
+        ttl_sec: int | None = None,
+        replace: bool = False,
+        *,
+        cwd: str | None = None,
+        workspace_root: str | None = None,
+        lua_roots: list[str] | None = None,
+        c_roots: list[str] | None = None,
+        mounts: JsonValue | None = None,
+    ) -> JsonMap:
         """
         Create or replace one persistent runtime lease.
         创建或替换一个持久运行时租约。
         """
 
-        return require_runtime_session_ok(
-            self.call_raw(
-                "create",
-                {
-                    "sid": sid,
-                    "ttl_sec": ttl_sec,
-                    "replace": replace,
-                },
-            ),
-            "runtime session create",
+        payload: JsonMap = {
+            "sid": sid,
+            "replace": replace,
+        }
+        if ttl_sec is not None:
+            payload["ttl_sec"] = ttl_sec
+        if cwd is not None:
+            payload["cwd"] = cwd
+        if workspace_root is not None:
+            payload["workspace_root"] = workspace_root
+        if lua_roots is not None:
+            payload["lua_roots"] = lua_roots
+        if c_roots is not None:
+            payload["c_roots"] = c_roots
+        if mounts is not None:
+            payload["mounts"] = mounts
+        return require_runtime_lease_ok(
+            self.call_raw("create", payload),
+            "runtime lease create",
         )
 
     def create_handle(
         self,
         sid: str,
-        ttl_sec: int = 600,
+        ttl_sec: int | None = None,
         replace: bool = False,
-    ) -> "RuntimeSessionHandle":
+        *,
+        cwd: str | None = None,
+        workspace_root: str | None = None,
+        lua_roots: list[str] | None = None,
+        c_roots: list[str] | None = None,
+        mounts: JsonValue | None = None,
+    ) -> "RuntimeLeaseHandle":
         """
-        Create one runtime-session handle object from one fresh create response.
-        基于一份新的 create 响应创建一个运行时会话句柄对象。
-        """
-
-        return RuntimeSessionHandle.from_payload(self, self.create(sid, ttl_sec=ttl_sec, replace=replace))
-
-    def bind_handle(self, payload: JsonMap) -> "RuntimeSessionHandle":
-        """
-        Rebuild one runtime-session handle object from one persisted payload.
-        基于一份已持久化载荷重建一个运行时会话句柄对象。
+        Create one runtime-lease handle object from one fresh create response.
+        基于一份新的 create 响应创建一个运行时租约句柄对象。
         """
 
-        return RuntimeSessionHandle.from_payload(self, payload)
+        return RuntimeLeaseHandle.from_payload(
+            self,
+            self.create(
+                sid,
+                ttl_sec=ttl_sec,
+                replace=replace,
+                cwd=cwd,
+                workspace_root=workspace_root,
+                lua_roots=lua_roots,
+                c_roots=c_roots,
+                mounts=mounts,
+            ),
+        )
+
+    def bind_handle(self, payload: JsonMap) -> "RuntimeLeaseHandle":
+        """
+        Rebuild one runtime-lease handle object from one persisted payload.
+        基于一份已持久化载荷重建一个运行时租约句柄对象。
+        """
+
+        return RuntimeLeaseHandle.from_payload(self, payload)
 
     def eval(
         self,
@@ -701,6 +739,7 @@ class RuntimeSessionClient:
         timeout_ms: int = 60_000,
         sid: str | None = None,
         generation: int | None = None,
+        invocation_context: LuaInvocationContext | dict[str, Any] | None = None,
     ) -> JsonMap:
         """
         Evaluate one Lua chunk inside one persistent runtime lease.
@@ -712,12 +751,13 @@ class RuntimeSessionClient:
             "code": code,
             "args": args or {},
             "timeout_ms": timeout_ms,
+            "invocation_context": invocation_context_to_json(invocation_context),
         }
         if sid is not None:
             payload["sid"] = sid
         if generation is not None:
             payload["generation"] = generation
-        return require_runtime_session_ok(self.call_raw("eval", payload), "runtime session eval")
+        return require_runtime_lease_ok(self.call_raw("eval", payload), "runtime lease eval")
 
     def status(
         self,
@@ -750,24 +790,24 @@ class RuntimeSessionClient:
             payload["sid"] = sid
         return self.call_raw("list", payload)
 
-    def list_handles(self, sid: str | None = None) -> list["RuntimeSessionHandle"]:
+    def list_handles(self, sid: str | None = None) -> list["RuntimeLeaseHandle"]:
         """
-        List active runtime-session handles rebuilt from the current lease listing payload.
-        基于当前租约列表载荷重建活跃运行时会话句柄列表。
+        List active runtime-lease handles rebuilt from the current lease listing payload.
+        基于当前租约列表载荷重建活跃运行时租约句柄列表。
         """
 
         leases = self.list(sid).get("leases")
         if not isinstance(leases, list):
-            raise RuntimeError("runtime session list payload is missing the leases array")
+            raise RuntimeError("runtime lease list payload is missing the leases array")
         return [
-            self.bind_handle(require_json_map(lease, "runtime session lease entry"))
+            self.bind_handle(require_json_map(lease, "runtime lease entry"))
             for lease in leases
         ]
 
-    def find_handle(self, sid: str) -> "RuntimeSessionHandle | None":
+    def find_handle(self, sid: str) -> "RuntimeLeaseHandle | None":
         """
-        Return the first active runtime-session handle for one SID when present.
-        返回某个 SID 的第一个活跃运行时会话句柄（如果存在）。
+        Return the first active runtime-lease handle for one SID when present.
+        返回某个 SID 的第一个活跃运行时租约句柄（如果存在）。
         """
 
         handles = self.list_handles(sid)
@@ -793,35 +833,35 @@ class RuntimeSessionClient:
             payload["generation"] = generation
         return self.call_raw("close", payload)
 
-    def uses_system_runtime_session_endpoints(self) -> bool:
+    def uses_system_runtime_lease_endpoints(self) -> bool:
         """
-        Return whether this helper will dispatch runtime-session requests to dedicated system entrypoints.
-        返回当前辅助器是否会把运行时会话请求分发到专用 system 入口。
+        Return whether this helper will dispatch runtime-lease requests to dedicated system entrypoints.
+        返回当前辅助器是否会把运行时租约请求分发到专用 system 入口。
         """
 
         return self.authority is not None
 
-    def _runtime_session_function_name(self, action: str) -> str:
+    def _runtime_lease_function_name(self, action: str) -> str:
         """
-        Resolve the concrete runtime-session JSON FFI entrypoint name for one logical action.
-        为单个逻辑动作解析具体的运行时会话 JSON FFI 入口名称。
+        Resolve the concrete runtime-lease JSON FFI entrypoint name for one logical action.
+        为单个逻辑动作解析具体的运行时租约 JSON FFI 入口名称。
         """
 
-        public_name = f"luaskills_ffi_runtime_session_{action}_json"
+        public_name = f"luaskills_ffi_runtime_lease_{action}_json"
         if self.authority is None:
             return public_name
-        return f"luaskills_ffi_system_runtime_session_{action}_json"
+        return f"luaskills_ffi_system_runtime_lease_{action}_json"
 
 
-class RuntimeSessionHandle:
+class RuntimeLeaseHandle:
     """
-    Stable host-side runtime-session handle that carries lease identity guards automatically.
-    自动携带租约身份护栏的稳定宿主侧运行时会话句柄。
+    Stable host-side runtime-lease handle that carries lease identity guards automatically.
+    自动携带租约身份护栏的稳定宿主侧运行时租约句柄。
     """
 
     def __init__(
         self,
-        sessions: RuntimeSessionClient,
+        sessions: RuntimeLeaseClient,
         lease_id: str,
         sid: str,
         generation: int,
@@ -837,17 +877,17 @@ class RuntimeSessionHandle:
         self.generation = generation
 
     @classmethod
-    def from_payload(cls, sessions: RuntimeSessionClient, payload: JsonMap) -> "RuntimeSessionHandle":
+    def from_payload(cls, sessions: RuntimeLeaseClient, payload: JsonMap) -> "RuntimeLeaseHandle":
         """
-        Construct one runtime-session handle from one payload that contains identity fields.
-        从包含身份字段的一份载荷中构造一个运行时会话句柄。
+        Construct one runtime-lease handle from one payload that contains identity fields.
+        从包含身份字段的一份载荷中构造一个运行时租约句柄。
         """
 
         return cls(
             sessions=sessions,
-            lease_id=require_runtime_session_string_field(payload, "lease_id"),
-            sid=require_runtime_session_string_field(payload, "sid"),
-            generation=require_runtime_session_int_field(payload, "generation"),
+            lease_id=require_runtime_lease_string_field(payload, "lease_id"),
+            sid=require_runtime_lease_string_field(payload, "sid"),
+            generation=require_runtime_lease_int_field(payload, "generation"),
         )
 
     def identity_payload(self) -> JsonMap:
@@ -862,7 +902,13 @@ class RuntimeSessionHandle:
             "generation": self.generation,
         }
 
-    def eval(self, code: str, args: JsonMap | None = None, timeout_ms: int = 60_000) -> JsonMap:
+    def eval(
+        self,
+        code: str,
+        args: JsonMap | None = None,
+        timeout_ms: int = 60_000,
+        invocation_context: LuaInvocationContext | dict[str, Any] | None = None,
+    ) -> JsonMap:
         """
         Evaluate Lua code while automatically attaching the stored lease identity guards.
         执行 Lua 代码时自动附带已保存的租约身份护栏。
@@ -875,6 +921,7 @@ class RuntimeSessionHandle:
             timeout_ms=timeout_ms,
             sid=self.sid,
             generation=self.generation,
+            invocation_context=invocation_context,
         )
 
     def status(self) -> JsonMap:
@@ -894,41 +941,41 @@ class RuntimeSessionHandle:
         return self.sessions.close(self.lease_id, sid=self.sid, generation=self.generation)
 
 
-def require_runtime_session_ok(payload: JsonMap, action: str) -> JsonMap:
+def require_runtime_lease_ok(payload: JsonMap, action: str) -> JsonMap:
     """
-    Require one runtime-session payload to report success.
-    要求单个运行时会话载荷报告成功。
+    Require one runtime-lease payload to report success.
+    要求单个运行时租约载荷报告成功。
     """
 
     if payload.get("ok") is True:
         return payload
     raise RuntimeError(
-        f"{action} failed: {payload.get('error_code') or 'unknown'}: {payload.get('message') or 'Unknown runtime session error'}"
+        f"{action} failed: {payload.get('error_code') or 'unknown'}: {payload.get('message') or 'Unknown runtime lease error'}"
     )
 
 
-def require_runtime_session_string_field(payload: JsonMap, field_name: str) -> str:
+def require_runtime_lease_string_field(payload: JsonMap, field_name: str) -> str:
     """
-    Read one required runtime-session string field from one payload object.
-    从一份载荷对象中读取一个必填的运行时会话字符串字段。
+    Read one required runtime-lease string field from one payload object.
+    从一份载荷对象中读取一个必填的运行时租约字符串字段。
     """
 
     value = payload.get(field_name)
     if isinstance(value, str) and value:
         return value
-    raise RuntimeError(f"runtime session payload is missing required string field: {field_name}")
+    raise RuntimeError(f"runtime lease payload is missing required string field: {field_name}")
 
 
-def require_runtime_session_int_field(payload: JsonMap, field_name: str) -> int:
+def require_runtime_lease_int_field(payload: JsonMap, field_name: str) -> int:
     """
-    Read one required runtime-session integer field from one payload object.
-    从一份载荷对象中读取一个必填的运行时会话整数字段。
+    Read one required runtime-lease integer field from one payload object.
+    从一份载荷对象中读取一个必填的运行时租约整数字段。
     """
 
     value = payload.get(field_name)
     if isinstance(value, int):
         return value
-    raise RuntimeError(f"runtime session payload is missing required integer field: {field_name}")
+    raise RuntimeError(f"runtime lease payload is missing required integer field: {field_name}")
 
 
 def require_json_map(value: JsonValue, context: str) -> JsonMap:
@@ -982,6 +1029,7 @@ def default_host_options(runtime_root: str | os.PathLike[str]) -> dict[str, Any]
         "host_provided_tool_root": normalized_path(root / "bin" / "tools"),
         "host_provided_lua_root": normalized_path(root / "lua_packages"),
         "host_provided_ffi_root": normalized_path(root / "libs"),
+        "system_lua_lib_dir": None,
         "download_cache_root": normalized_path(root / "temp" / "downloads"),
         "dependency_dir_name": "dependencies",
         "state_dir_name": "state",
