@@ -7,9 +7,88 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from enum import Enum
-from typing import Any, TypeAlias
+from typing import Any, Literal, TypeAlias, TypedDict
 
 JsonValue: TypeAlias = Any
+
+
+class RuntimeChangeSetLine(TypedDict):
+    """
+    One canonical change-set line record.
+    单条 canonical change_set 行记录。
+    """
+
+    line: int
+    content: str
+
+
+class RuntimeChangeSetHunk(TypedDict):
+    """
+    One canonical change-set modify hunk.
+    单个 canonical change_set modify hunk。
+    """
+
+    before: str
+    delete: list[RuntimeChangeSetLine]
+    insert: list[RuntimeChangeSetLine]
+    after: str
+
+
+class RuntimeChangeSetDiagnostic(TypedDict):
+    """
+    One canonical change-set diagnostic record.
+    单条 canonical change_set 诊断记录。
+    """
+
+    level: str
+    message: str
+
+
+class RuntimeChangeSetFile(TypedDict, total=False):
+    """
+    One canonical change-set file record.
+    单个 canonical change_set 文件记录。
+    """
+
+    change: Literal["create", "modify", "delete", "rename"]
+    path: str
+    old_path: str
+    new_path: str
+    content: str
+    hunks: list[RuntimeChangeSetHunk]
+    patch: str | None
+
+
+class RuntimeChangeSetPayload(TypedDict, total=False):
+    """
+    Canonical `change_set` payload consumed by IDE-aware hosts.
+    IDE 感知宿主消费的 canonical `change_set` 载荷。
+    """
+
+    mode: Literal["preview", "applied"]
+    summary: str | None
+    files: list[RuntimeChangeSetFile]
+    diagnostics: list[RuntimeChangeSetDiagnostic]
+
+
+class RuntimeHostResult(TypedDict):
+    """
+    Structured host-side result returned alongside tool text content.
+    与工具文本结果一并返回的结构化宿主侧结果。
+    """
+
+    kind: str
+    payload: JsonValue
+
+
+class RuntimeChangeSetHostResult(TypedDict):
+    """
+    Runtime host-result envelope specialized for canonical `change_set`.
+    专用于 canonical `change_set` 的运行时宿主结果包络。
+    """
+
+    kind: Literal["change_set"]
+    payload: RuntimeChangeSetPayload
 
 
 class Authority(str, Enum):

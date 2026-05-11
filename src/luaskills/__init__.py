@@ -49,6 +49,15 @@ from .runtime_assets import (
     write_runtime_install_manifest,
 )
 from .types import Authority, LuaInvocationContext, RuntimeSkillRoot, SkillInstallSourceType
+from .types import (
+    RuntimeChangeSetDiagnostic,
+    RuntimeChangeSetFile,
+    RuntimeChangeSetHostResult,
+    RuntimeChangeSetHunk,
+    RuntimeChangeSetLine,
+    RuntimeChangeSetPayload,
+    RuntimeHostResult,
+)
 
 __all__ = [
     "Authority",
@@ -67,6 +76,13 @@ __all__ = [
     "RuntimeRoots",
     "RuntimeSkillRoot",
     "RuntimeDatabasePreset",
+    "RuntimeChangeSetDiagnostic",
+    "RuntimeChangeSetFile",
+    "RuntimeChangeSetHostResult",
+    "RuntimeChangeSetHunk",
+    "RuntimeChangeSetLine",
+    "RuntimeChangeSetPayload",
+    "RuntimeHostResult",
     "RuntimeModelCaller",
     "RuntimeModelCapability",
     "RuntimeModelEmbedRequest",
