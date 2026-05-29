@@ -77,11 +77,13 @@ class RuntimeRoots:
             root / "temp" / "downloads",
             root / "resources",
             root / "lua_packages",
-            root / "bin" / "tools",
+            root / "bin",
             root / "libs",
             root / "dependencies",
             root / "state",
             root / "databases",
+            root / "config",
+            root / "system_lua_lib",
         ]
         for skill_root in roots:
             skills_dir = skill_root.skills_dir if isinstance(skill_root, RuntimeSkillRoot) else skill_root["skills_dir"]
