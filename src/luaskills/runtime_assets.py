@@ -65,25 +65,25 @@ Strict SHA-512 Base64 digest pattern used for npm integrity strings.
 npm integrity 字符串使用的严格 SHA-512 Base64 摘要模式。
 """
 
-DEFAULT_MANAGED_PYTHON_VERSION = "3.12.7"
+DEFAULT_MANAGED_PYTHON_VERSION = "3.14.4"
 """
 Default managed CPython version installed for Lua-driven child runtimes.
 Lua 调度子运行时安装使用的默认受管 CPython 版本。
 """
 
-DEFAULT_MANAGED_UV_VERSION = "0.11.17"
+DEFAULT_MANAGED_UV_VERSION = "0.11.28"
 """
 Default standalone uv version used to install managed Python environments.
 安装受管 Python 环境使用的默认独立 uv 版本。
 """
 
-DEFAULT_MANAGED_NODE_VERSION = "22.11.0"
+DEFAULT_MANAGED_NODE_VERSION = "24.18.0"
 """
 Default managed Node.js version installed for Lua-driven child runtimes.
 Lua 调度子运行时安装使用的默认受管 Node.js 版本。
 """
 
-DEFAULT_MANAGED_PNPM_VERSION = "9.15.0"
+DEFAULT_MANAGED_PNPM_VERSION = "11.11.0"
 """
 Default pnpm version used to install managed Node.js dependencies.
 安装受管 Node.js 依赖使用的默认 pnpm 版本。
