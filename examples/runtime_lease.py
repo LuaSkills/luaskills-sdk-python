@@ -41,6 +41,16 @@ def main() -> None:
 
     runtime_root = resolve_runtime_root()
     skill_roots = RuntimeRoots.standard(runtime_root)
+    # SystemPackageRoot is the trusted package root retained for the complete lease lifetime.
+    # SystemPackageRoot 是在完整租约生命周期内保持可信的包根。
+    system_package_root = (runtime_root / "system_lua_lib" / "runtime-lease-example").resolve()
+    # SystemPackage binds the stable package identity and exact dependency manifest.
+    # SystemPackage 绑定稳定包身份与精确依赖清单。
+    system_package = {
+        "id": "runtime-lease-example",
+        "root": str(system_package_root),
+        "dependencies_file": str(system_package_root / "dependencies.json"),
+    }
 
     with LuaSkillsClient(library_path=resolve_library_path(), runtime_root=runtime_root) as client:
         client.load_from_roots(skill_roots)
@@ -62,8 +72,9 @@ def main() -> None:
             RUNTIME_SESSION_SID,
             ttl_sec=600,
             replace=True,
-            cwd=str(runtime_root / "system_lua_lib"),
+            cwd=str(system_package_root),
             mounts={"example": "python-runtime-lease"},
+            system_package=system_package,
         )
         identity = session.identity_payload()
         print("Lease created:", identity["lease_id"])
