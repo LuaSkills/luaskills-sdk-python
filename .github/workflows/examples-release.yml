@@ -63,7 +63,7 @@ jobs:
           luaskills install-runtime --database none --runtime-root examples/fixture_runtime
           python examples/basic.py
           python examples/query.py
-          python examples/runtime_session.py
+          python examples/runtime_lease.py
           \`\`\`
 
           Main repository: https://github.com/LuaSkills/luaskills
@@ -94,7 +94,7 @@ jobs:
           python examples/query.py
           python examples/call.py
           python examples/lifecycle.py
-          python examples/runtime_session.py
+          python examples/runtime_lease.py
           python examples/provider_callback.py
 
       - name: Package examples asset
