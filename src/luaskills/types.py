@@ -107,8 +107,18 @@ class SkillInstallSourceType(str, Enum):
     支持的受管 skill 来源类型。
     """
 
+    # GitHub Release backed managed skill source.
+    # 基于 GitHub Release 的受管理 skill 来源。
     GITHUB = "github"
+    # Official LuaSkills Hub managed skill source.
+    # 官方 LuaSkills Hub 的受管理 skill 来源。
+    OFFICIAL_HUB = "official_hub"
+    # Remote source descriptor URL source.
+    # 远程 source 描述文件 URL 来源。
     URL = "url"
+    # Host-private URL manifest source.
+    # 宿主私有 URL manifest 来源。
+    PRIVATE_URL_MANIFEST = "private_url_manifest"
 
 
 @dataclass(frozen=True)

@@ -27,6 +27,18 @@ Use `library_path` or `LUASKILLS_LIB` only when your host intentionally manages 
 
 ## Runtime Assets
 
+The source distribution includes a unified script that does not require the Python CLI and directly fetches LuaSkills FFI, Lua runtime packages, and VLDB:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/deps/sync_runtime_assets.ps1 -Target all -Database vldb-controller -RuntimeRoot D:\runtime\luaskills
+```
+
+```bash
+RUNTIME_ROOT=/opt/luaskills scripts/deps/sync_runtime_assets.sh all vldb-controller
+```
+
+Supported targets are `all`, `luaskills`, `lua`, and `vldb`. VLDB presets are `none`, `vldb-controller`, `vldb-direct`, and `host-callback`. The scripts pin LuaSkills to `v0.5.0` by default and accept explicit release-version overrides.
+
 `install-runtime` downloads GitHub Release assets, verifies `.sha256` sidecars, extracts native files and Lua runtime packages, and writes:
 
 ```text
@@ -46,12 +58,18 @@ Default LuaSkills assets:
 - `luaskills-ffi-sdk-{platform}.tar.gz`: installed by default; provides the public FFI dynamic library, headers, and FFI licenses.
 - `lua-deps-{platform}.tar.gz`: not installed by the SDK; it is a build-time bundle for CI, source builds, or advanced native module rebuilds.
 
+Managed Python and Node.js child runtimes are optional. Use `--managed-runtimes all` when Lua skills need `vulcan.runtime.python.*` or `vulcan.runtime.node.*`; the installer places Python, `uv`, Node.js, and `pnpm` under `runtime_root/dependencies/runtimes/...`.
+
+Managed child runtimes support Windows x64, Linux x64/ARM64, and macOS x64/ARM64. Windows ARM is explicitly rejected before any download or target-directory creation. Source distributions also include the standalone `scripts/deps/fetch_managed_runtimes.ps1`, `scripts/deps/fetch_managed_runtimes.sh`, and `scripts/debug-tools/managed_runtime_layout_check.py` tools used to prepare and validate debug runtime roots.
+
+The current exact managed dependency versions are Python `3.12.7`, uv `0.11.17`, Node.js `22.11.0`, and pnpm `9.15.0`. Package `dependencies.yaml` files must declare the same exact runtime and package-manager versions unless the host deliberately installs another supported version.
+
 The SDK keeps LuaSkills core aligned with the SDK release and resolves runtime packages from the compatible `0.1` series by selecting the newest published patch automatically.
 
 ## Version Alignment
 
 - Keep the SDK and LuaSkills core on the same current release line whenever possible.
-- The current SDK defaults to LuaSkills core tag `v0.4.6`.
+- The current SDK defaults to LuaSkills core tag `v0.5.0`.
 - Runtime packages and native dependencies still come from the split `LuaSkills/luaskills-packages` and related release assets.
 - SDK default host options now pass only `runtime_root`; LuaSkills derives `bin`, `libs`, `lua_packages`, `resources`, `skills`, `temp`, `dependencies`, `state`, `databases`, `config`, and `system_lua_lib`.
 - Host tools live directly under `runtime_root/bin`, not `runtime_root/bin/tools`.
@@ -61,6 +79,7 @@ luaskills install-runtime --database none --runtime-root D:\runtime\luaskills
 luaskills install-runtime --database vldb-direct --runtime-root D:\runtime\luaskills
 luaskills install-runtime --database vldb-controller --runtime-root D:\runtime\luaskills
 luaskills install-runtime --database host-callback --runtime-root D:\runtime\luaskills
+luaskills install-runtime --database none --managed-runtimes all --runtime-root D:\runtime\luaskills
 ```
 
 Use `--dry-run` to inspect exact release URLs before downloading:
@@ -309,6 +328,7 @@ try:
         replace=True,
         cwd="D:/runtime/luaskills/system_lua_lib",
         mounts={"channel": "demo"},
+        system_package={"id": "debug-plugin", "root": "D:/runtime/luaskills/system_lua_lib/debug-plugin", "dependencies_file": "dependencies.json"},
     )
     result = session.eval("counter = (counter or 0) + 1; return { counter = counter }")
     print(result["result"])
@@ -327,7 +347,8 @@ finally:
 - When `host_result["kind"] == "change_set"`, hosts should treat `payload` as `RuntimeChangeSetPayload`.
 - Canonical `change_set` payloads now use file lifecycle records plus hunk-level `before + delete[] + insert[] + after` blocks for `modify` changes.
 - `create` and `delete` file records carry full-file `content`, while `rename` records carry `old_path` and `new_path`.
-- `runtime_leases().create()` and `create_handle()` accept host-owned path options such as `cwd`, `workspace_root`, `lua_roots`, `c_roots`, and `mounts`.
+- Public leases accept `cwd`, `workspace_root`, `lua_roots`, `c_roots`, and `mounts`. System leases require `system_package`, reject `lua_roots/c_roots`, and derive roots from the trusted package manifest.
+- `poll_managed_session_events()`, `wait_managed_session_events()`, and `set_managed_session_wake_callback()` expose the 0.5.0 event surface.
 
 ## Authority And Management
 

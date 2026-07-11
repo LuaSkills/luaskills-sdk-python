@@ -3,3 +3,4 @@ include README_cn.md
 include LICENSE
 include VERSION
 recursive-include examples *.py *.md *.yaml *.lua
+recursive-include scripts *.py *.ps1 *.sh

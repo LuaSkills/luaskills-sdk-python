@@ -6,17 +6,52 @@ LuaSkills 公共 JSON FFI 表面的高级 Python 客户端。
 from __future__ import annotations
 
 import os
+import threading
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, cast
+from urllib.parse import urlparse
 
-from .ffi import LuaSkillsJsonFfi
+from .ffi import LuaSkillsJsonFfi, ManagedSessionWakeCallback
 from .roots import RuntimeRoots, normalized_path
 from .runtime_assets import host_options_from_runtime_manifest, load_runtime_install_manifest
-from .types import Authority, JsonValue, LuaInvocationContext, RuntimeSkillRoot, authority_value, roots_to_json
+from .types import Authority, JsonValue, LuaInvocationContext, RuntimeSkillRoot, SkillInstallSourceType, authority_value, roots_to_json
 
 # Generic JSON object payload used by runtime-lease and system helpers.
 # 运行时租约与 system 辅助器使用的通用 JSON 对象载荷。
 JsonMap = dict[str, JsonValue]
+
+# Supported skill lifecycle JSON FFI action names.
+# 受支持的 skill 生命周期 JSON FFI 动作名称。
+SkillLifecycleAction = Literal["disable_skill", "enable_skill", "uninstall_skill", "install_skill", "update_skill"]
+
+# Runtime whitelist for skill lifecycle actions accepted by FFI name construction.
+# FFI 函数名构造接受的 skill 生命周期动作运行时白名单。
+SKILL_LIFECYCLE_ACTIONS: tuple[SkillLifecycleAction, ...] = (
+    "disable_skill",
+    "enable_skill",
+    "uninstall_skill",
+    "install_skill",
+    "update_skill",
+)
+
+# Exact Rust SkillInstallRequest JSON keys accepted by SDK lifecycle wrappers.
+# SDK 生命周期封装接受的精确 Rust SkillInstallRequest JSON 键。
+SKILL_INSTALL_REQUEST_KEYS = frozenset(("skill_id", "source", "source_type"))
+
+# Source types whose source locator is parsed as an absolute remote URL.
+# source 定位值会被解析为绝对远程 URL 的来源类型。
+URL_SKILL_INSTALL_SOURCE_TYPES = frozenset((
+    SkillInstallSourceType.URL.value,
+    SkillInstallSourceType.PRIVATE_URL_MANIFEST.value,
+))
+
+# Supported runtime-lease JSON FFI action names.
+# 受支持的运行时租约 JSON FFI 动作名称。
+RuntimeLeaseAction = Literal["create", "eval", "status", "list", "close"]
+
+# Runtime whitelist for runtime-lease actions accepted by raw dispatch.
+# 原始分发接受的运行时租约动作运行时白名单。
+RUNTIME_LEASE_ACTIONS: tuple[RuntimeLeaseAction, ...] = ("create", "eval", "status", "list", "close")
 
 
 class LuaSkillsClient:
@@ -46,10 +81,32 @@ class LuaSkillsClient:
         if engine_options is None and ensure_runtime_layout:
             RuntimeRoots.ensure_layout(runtime_root_path)
         handle = self.ffi.call_json("luaskills_ffi_engine_new_json", {"options": options})
-        self.engine_id = int(handle["engine_id"])
-        self.closed = False
+        self._engine_id = int(handle["engine_id"])
+        self._lifecycle_condition = threading.Condition()
+        self._active_calls = 0
+        self._closing = False
+        self._closed = False
         self.config = SkillConfigClient(self)
         self.skills = SkillManagementClient(self, system_plane=False)
+
+    @property
+    def engine_id(self) -> int:
+        """
+        Return the immutable native engine handle identifier.
+        返回不可变的原生引擎句柄标识符。
+        """
+
+        return self._engine_id
+
+    @property
+    def closed(self) -> bool:
+        """
+        Return whether the native engine handle has been released.
+        返回原生引擎句柄是否已经释放。
+        """
+
+        with self._lifecycle_condition:
+            return self._closed
 
     def __enter__(self) -> "LuaSkillsClient":
         """
@@ -92,6 +149,56 @@ class LuaSkillsClient:
         """
 
         return LuaSkillsJsonFfi(library_path, runtime_root).call_json_no_input("luaskills_ffi_describe_json")
+
+    def poll_managed_session_events(
+        self,
+        max_events: int,
+        authority: Authority | str = Authority.SYSTEM,
+    ) -> JsonMap:
+        """
+        Destructively drain one bounded engine-level managed-session event batch.
+        以破坏性方式排空一批有界的引擎级受管会话事件。
+        """
+
+        if max_events <= 0:
+            raise ValueError("max_events must be positive")
+        return cast(JsonMap, self._call(
+            "luaskills_ffi_managed_session_events_poll_json",
+            {"engine_id": self.engine_id, "max_events": max_events, "authority": authority_value(authority)},
+        ))
+
+    def wait_managed_session_events(
+        self,
+        max_events: int,
+        timeout_ms: int,
+        authority: Authority | str = Authority.SYSTEM,
+    ) -> JsonMap:
+        """
+        Wait for and destructively drain one bounded engine-level managed-session event batch.
+        等待并以破坏性方式排空一批有界的引擎级受管会话事件。
+        """
+
+        if max_events <= 0:
+            raise ValueError("max_events must be positive")
+        if timeout_ms < 0:
+            raise ValueError("timeout_ms must be non-negative")
+        return cast(JsonMap, self._call(
+            "luaskills_ffi_managed_session_events_wait_json",
+            {
+                "engine_id": self.engine_id,
+                "max_events": max_events,
+                "timeout_ms": timeout_ms,
+                "authority": authority_value(authority),
+            },
+        ))
+
+    def set_managed_session_wake_callback(self, callback: ManagedSessionWakeCallback | None) -> None:
+        """
+        Register, replace, or clear this engine's managed-session wake callback.
+        注册、替换或清除当前引擎的受管会话唤醒回调。
+        """
+
+        self.ffi.set_managed_session_wake_callback(self.engine_id, callback)
 
     def system(self, authority: Authority | str = Authority.SYSTEM) -> "SystemSkillManagementClient":
         """
@@ -254,10 +361,15 @@ class LuaSkillsClient:
         释放原生引擎句柄。
         """
 
-        if self.closed:
+        engine_id = self._begin_close()
+        if engine_id is None:
             return None
-        result = self.ffi.call_json("luaskills_ffi_engine_free_json", {"engine_id": self.engine_id})
-        self.closed = True
+        try:
+            result = self.ffi.call_json("luaskills_ffi_engine_free_json", {"engine_id": engine_id})
+        except BaseException as exc:
+            self._finish_close(exc)
+            raise
+        self._finish_close(None)
         return result
 
     def _call(self, function_name: str, payload: dict[str, Any]) -> Any:
@@ -266,9 +378,63 @@ class LuaSkillsClient:
         检查引擎句柄状态后调用一个 JSON FFI 函数。
         """
 
-        if self.closed:
-            raise RuntimeError(f"LuaSkills engine {self.engine_id} is already closed")
-        return self.ffi.call_json(function_name, payload)
+        self._begin_call()
+        try:
+            return self.ffi.call_json(function_name, payload)
+        finally:
+            self._end_call()
+
+    def _begin_call(self) -> None:
+        """
+        Reserve the native engine handle for one FFI dispatch.
+        为单次 FFI 分发保留原生引擎句柄。
+        """
+
+        with self._lifecycle_condition:
+            if self._closed:
+                raise RuntimeError(f"LuaSkills engine {self._engine_id} is already closed")
+            if self._closing:
+                raise RuntimeError(f"LuaSkills engine {self._engine_id} is closing")
+            self._active_calls += 1
+
+    def _end_call(self) -> None:
+        """
+        Release one active FFI call reservation and wake pending close calls.
+        释放一个活跃 FFI 调用占用并唤醒等待中的关闭调用。
+        """
+
+        with self._lifecycle_condition:
+            self._active_calls -= 1
+            if self._active_calls == 0:
+                self._lifecycle_condition.notify_all()
+
+    def _begin_close(self) -> int | None:
+        """
+        Start the exclusive close phase after all active FFI calls finish.
+        在所有活跃 FFI 调用结束后启动独占关闭阶段。
+        """
+
+        with self._lifecycle_condition:
+            while self._closing:
+                self._lifecycle_condition.wait()
+            if self._closed:
+                return None
+            self._closing = True
+            while self._active_calls > 0:
+                self._lifecycle_condition.wait()
+            return self._engine_id
+
+    def _finish_close(self, close_error: BaseException | None) -> None:
+        """
+        Complete the close phase and publish the final lifecycle state.
+        完成关闭阶段并发布最终生命周期状态。
+        """
+
+        with self._lifecycle_condition:
+            if close_error is None:
+                self._closed = True
+            self._closing = False
+            self._lifecycle_condition.notify_all()
 
 
 class SkillConfigClient:
@@ -427,7 +593,7 @@ class SkillManagementClient:
 
     def _apply(
         self,
-        action_name: str,
+        action_name: Literal["install_skill", "update_skill"],
         skill_roots: list[RuntimeSkillRoot | dict[str, str]],
         request: dict[str, Any],
         *,
@@ -439,20 +605,22 @@ class SkillManagementClient:
         执行单个 install 或 update JSON FFI 动作。
         """
 
+        validated_request = validate_skill_install_request(action_name, request)
         return self.client._call(self._function_name(action_name), {
             "engine_id": self.client.engine_id,
             "skill_roots": roots_to_json(skill_roots),
-            "request": request,
+            "request": validated_request,
             "target_root": root_to_json(target_root),
             **self._authority_payload(authority),
         })
 
-    def _function_name(self, base_name: str) -> str:
+    def _function_name(self, action_name: SkillLifecycleAction) -> str:
         """
         Build the concrete JSON FFI function name for the current namespace.
         为当前命名空间构造具体 JSON FFI 函数名称。
         """
 
+        base_name = skill_lifecycle_action_value(action_name)
         prefix = "system_" if self.system_plane else ""
         return f"luaskills_ffi_{prefix}{base_name}_json"
 
@@ -481,7 +649,37 @@ class SystemSkillManagementClient(SkillManagementClient):
 
         super().__init__(client, system_plane=True, authority=authority)
 
-    def call(self, function_name: str, payload: JsonMap | None = None) -> JsonMap:
+    def install_private_url_manifest(
+        self,
+        skill_roots: list[RuntimeSkillRoot | dict[str, str]],
+        skill_id: str,
+        manifest_url: str,
+        *,
+        target_root: RuntimeSkillRoot | dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        """
+        Install one host-approved private URL-manifest skill through the system-private JSON FFI endpoint.
+        通过 system 私有 JSON FFI 入口安装单个宿主已批准的私有 URL manifest 技能。
+        """
+
+        return self._private_url_manifest("install", skill_roots, skill_id, manifest_url, target_root=target_root)
+
+    def update_private_url_manifest(
+        self,
+        skill_roots: list[RuntimeSkillRoot | dict[str, str]],
+        skill_id: str,
+        manifest_url: str,
+        *,
+        target_root: RuntimeSkillRoot | dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        """
+        Update one host-approved private URL-manifest skill through the system-private JSON FFI endpoint.
+        通过 system 私有 JSON FFI 入口更新单个宿主已批准的私有 URL manifest 技能。
+        """
+
+        return self._private_url_manifest("update", skill_roots, skill_id, manifest_url, target_root=target_root)
+
+    def _call_object(self, function_name: str, payload: JsonMap | None = None) -> JsonMap:
         """
         Call one authority-bound JSON FFI function and require an object-shaped result payload.
         调用一个绑定 authority 的 JSON FFI 函数并要求返回对象形状结果载荷。
@@ -492,7 +690,7 @@ class SystemSkillManagementClient(SkillManagementClient):
             f"{function_name} object result",
         )
 
-    def call_value(self, function_name: str, payload: JsonMap | None = None) -> JsonValue:
+    def _call_value(self, function_name: str, payload: JsonMap | None = None) -> JsonValue:
         """
         Call one authority-bound JSON FFI function and return any decoded JSON result shape.
         调用一个绑定 authority 的 JSON FFI 函数并返回任意已解码 JSON 结果形状。
@@ -514,7 +712,7 @@ class SystemSkillManagementClient(SkillManagementClient):
         列出当前绑定 authority 可见的运行时入口。
         """
 
-        result = self.call_value("luaskills_ffi_list_entries_json")
+        result = self._call_value("luaskills_ffi_list_entries_json")
         if not isinstance(result, list):
             raise RuntimeError("luaskills_ffi_list_entries_json did not return one array result")
         return [entry for entry in result if isinstance(entry, dict)]
@@ -525,7 +723,7 @@ class SystemSkillManagementClient(SkillManagementClient):
         列出当前绑定 authority 可见的技能帮助树。
         """
 
-        result = self.call_value("luaskills_ffi_list_skill_help_json")
+        result = self._call_value("luaskills_ffi_list_skill_help_json")
         if not isinstance(result, list):
             raise RuntimeError("luaskills_ffi_list_skill_help_json did not return one array result")
         return [entry for entry in result if isinstance(entry, dict)]
@@ -547,7 +745,7 @@ class SystemSkillManagementClient(SkillManagementClient):
         }
         if request_context is not None:
             payload["request_context"] = request_context
-        result = self.call_value("luaskills_ffi_render_skill_help_detail_json", payload)
+        result = self._call_value("luaskills_ffi_render_skill_help_detail_json", payload)
         if result is None:
             return None
         return require_json_map(result, "luaskills_ffi_render_skill_help_detail_json object result")
@@ -558,7 +756,7 @@ class SystemSkillManagementClient(SkillManagementClient):
         查询当前绑定 authority 可见的 prompt 参数补全项。
         """
 
-        result = self.call_value(
+        result = self._call_value(
             "luaskills_ffi_prompt_argument_completions_json",
             {
                 "prompt_name": prompt_name,
@@ -577,7 +775,7 @@ class SystemSkillManagementClient(SkillManagementClient):
         返回某个 canonical 工具名是否解析为一个可见技能入口。
         """
 
-        result = self.call(
+        result = self._call_object(
             "luaskills_ffi_is_skill_json",
             {
                 "tool_name": tool_name,
@@ -594,7 +792,7 @@ class SystemSkillManagementClient(SkillManagementClient):
         在可见时解析某个 canonical 工具名所属的技能标识。
         """
 
-        result = self.call(
+        result = self._call_object(
             "luaskills_ffi_skill_name_for_tool_json",
             {
                 "tool_name": tool_name,
@@ -617,6 +815,190 @@ class SystemSkillManagementClient(SkillManagementClient):
             "authority": authority_value(self.authority),
         }
 
+    def _private_url_manifest(
+        self,
+        action_name: Literal["install", "update"],
+        skill_roots: list[RuntimeSkillRoot | dict[str, str]],
+        skill_id: str,
+        manifest_url: str,
+        *,
+        target_root: RuntimeSkillRoot | dict[str, str] | None,
+    ) -> dict[str, Any]:
+        """
+        Execute one host-private URL-manifest install or update operation.
+        执行单个宿主私有 URL manifest 安装或更新操作。
+        """
+
+        validate_private_url_manifest_input(skill_id, manifest_url)
+        return require_json_map(
+            self.client._call(
+                f"luaskills_ffi_system_private_{action_name}_skill_from_url_manifest_json",
+                {
+                    "engine_id": self.client.engine_id,
+                    "skill_roots": roots_to_json(skill_roots),
+                    "skill_id": skill_id,
+                    "manifest_url": manifest_url,
+                    "target_root": root_to_json(target_root),
+                    "authority": authority_value(Authority.SYSTEM),
+                },
+            ),
+            f"private URL manifest {action_name} result",
+        )
+
+
+def skill_lifecycle_action_value(action: str) -> SkillLifecycleAction:
+    """
+    Return one validated skill lifecycle action string for JSON FFI function names.
+    返回一个用于 JSON FFI 函数名的已验证 skill 生命周期动作字符串。
+    """
+
+    if action in SKILL_LIFECYCLE_ACTIONS:
+        return cast(SkillLifecycleAction, action)
+    raise ValueError(f"unsupported skill lifecycle action: {action}")
+
+
+def validate_skill_install_request(action_name: SkillLifecycleAction, request: dict[str, Any]) -> dict[str, JsonValue]:
+    """
+    Return a protocol-shaped install or update request after rejecting malformed SDK input.
+    拒绝格式错误的 SDK 输入后返回符合协议形状的安装或更新请求。
+    """
+
+    if not isinstance(request, dict):
+        raise ValueError("skill install request must be one JSON object")
+    unknown_keys = sorted(str(key) for key in request if not isinstance(key, str) or key not in SKILL_INSTALL_REQUEST_KEYS)
+    if unknown_keys:
+        raise ValueError(f"skill install request contains unsupported keys: {', '.join(unknown_keys)}")
+    source_type = require_skill_install_source_type(request.get("source_type"))
+    skill_id = optional_exact_non_blank_string(request.get("skill_id"), "skill_id")
+    source = optional_exact_non_blank_string(request.get("source"), "source")
+    if source is not None and source_type in URL_SKILL_INSTALL_SOURCE_TYPES:
+        validate_http_url(source, "source")
+    validate_skill_install_request_presence(action_name, source_type, skill_id, source)
+    validated: dict[str, JsonValue] = {"source_type": source_type}
+    if skill_id is not None:
+        validated["skill_id"] = skill_id
+    if source is not None:
+        validated["source"] = source
+    return validated
+
+
+def require_skill_install_source_type(value: object) -> str:
+    """
+    Return one supported Rust SkillInstallSourceType value from an SDK request field.
+    从 SDK 请求字段返回一个受支持的 Rust SkillInstallSourceType 值。
+    """
+
+    if isinstance(value, SkillInstallSourceType):
+        return value.value
+    if isinstance(value, str) and value in {source_type.value for source_type in SkillInstallSourceType}:
+        return value
+    raise ValueError("skill install request source_type must be one of github, official_hub, url, private_url_manifest")
+
+
+def validate_skill_install_request_presence(
+    action_name: SkillLifecycleAction,
+    source_type: str,
+    skill_id: str | None,
+    source: str | None,
+) -> None:
+    """
+    Enforce the identifiers and source locators consumed by the native resolver for one lifecycle action.
+    强制校验原生解析器在单个生命周期动作中会消费的标识与来源定位值。
+    """
+
+    if action_name == "install_skill":
+        validate_skill_install_presence(source_type, skill_id, source)
+    elif action_name == "update_skill":
+        validate_skill_update_presence(source_type, skill_id, source)
+
+
+def validate_skill_install_presence(source_type: str, skill_id: str | None, source: str | None) -> None:
+    """
+    Enforce required fields for one install request before FFI dispatch.
+    在 FFI 分发前强制校验单个安装请求的必填字段。
+    """
+
+    if source_type == SkillInstallSourceType.GITHUB.value and source is None:
+        raise ValueError("github install request requires source")
+    if source_type == SkillInstallSourceType.OFFICIAL_HUB.value and skill_id is None and source is None:
+        raise ValueError("official_hub install request requires skill_id or source")
+    if source_type == SkillInstallSourceType.URL.value and (skill_id is None or source is None):
+        raise ValueError("url install request requires skill_id and source")
+    if source_type == SkillInstallSourceType.PRIVATE_URL_MANIFEST.value and (skill_id is None or source is None):
+        raise ValueError("private_url_manifest install request requires skill_id and source")
+
+
+def validate_skill_update_presence(source_type: str, skill_id: str | None, source: str | None) -> None:
+    """
+    Enforce required fields for one update request before FFI dispatch.
+    在 FFI 分发前强制校验单个更新请求的必填字段。
+    """
+
+    if source_type in (SkillInstallSourceType.GITHUB.value, SkillInstallSourceType.OFFICIAL_HUB.value):
+        if skill_id is None and source is None:
+            raise ValueError(f"{source_type} update request requires skill_id or source")
+    elif skill_id is None:
+        raise ValueError(f"{source_type} update request requires skill_id")
+
+
+def validate_private_url_manifest_input(skill_id: str, manifest_url: str) -> None:
+    """
+    Validate the dedicated private URL-manifest shortcut payload before FFI dispatch.
+    在 FFI 分发前校验专用私有 URL manifest 快捷入口载荷。
+    """
+
+    require_exact_non_blank_string(skill_id, "skill_id")
+    validate_http_url(manifest_url, "manifest_url")
+
+
+def optional_exact_non_blank_string(value: object, field_name: str) -> str | None:
+    """
+    Return an optional exact JSON string while rejecting empty or implicitly trimmed values.
+    返回可选的精确 JSON 字符串，同时拒绝空值或需要隐式裁剪的值。
+    """
+
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return require_exact_non_blank_string(value, field_name)
+    raise ValueError(f"skill install request {field_name} must be a string")
+
+
+def require_exact_non_blank_string(value: str, field_name: str) -> str:
+    """
+    Return one non-empty string that does not require SDK-side whitespace normalization.
+    返回一个不需要 SDK 侧空白规范化的非空字符串。
+    """
+
+    if not value or value.strip() != value:
+        raise ValueError(f"skill install request {field_name} must be a non-empty string without surrounding whitespace")
+    return value
+
+
+def validate_http_url(value: str, field_name: str) -> None:
+    """
+    Reject non-HTTP, relative, or credential-bearing URLs before native download resolution.
+    在原生下载解析前拒绝非 HTTP、相对路径或携带账号信息的 URL。
+    """
+
+    require_exact_non_blank_string(value, field_name)
+    parsed = urlparse(value)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        raise ValueError(f"skill install request {field_name} must be an absolute HTTP or HTTPS URL")
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError(f"skill install request {field_name} must not include credentials")
+
+
+def runtime_lease_action_value(action: str) -> RuntimeLeaseAction:
+    """
+    Return one validated runtime-lease action string for JSON FFI function names.
+    返回一个用于 JSON FFI 函数名的已验证运行时租约动作字符串。
+    """
+
+    if action in RUNTIME_LEASE_ACTIONS:
+        return cast(RuntimeLeaseAction, action)
+    raise ValueError(f"unsupported runtime lease action: {action}")
+
 
 class RuntimeLeaseClient:
     """
@@ -637,7 +1019,7 @@ class RuntimeLeaseClient:
         self.client = client
         self.authority = authority
 
-    def call_raw(self, action: str, payload: JsonMap) -> JsonMap:
+    def call_raw(self, action: RuntimeLeaseAction, payload: JsonMap) -> JsonMap:
         """
         Dispatch one raw runtime-lease JSON request without applying success checks.
         分发单个原始运行时租约 JSON 请求而不附加成功校验。
@@ -665,11 +1047,19 @@ class RuntimeLeaseClient:
         lua_roots: list[str] | None = None,
         c_roots: list[str] | None = None,
         mounts: JsonValue | None = None,
+        system_package: JsonMap | None = None,
     ) -> JsonMap:
         """
         Create or replace one persistent runtime lease.
         创建或替换一个持久运行时租约。
         """
+
+        if self.authority is not None and (lua_roots is not None or c_roots is not None):
+            raise ValueError("system runtime lease create does not accept lua_roots or c_roots")
+        if self.authority is not None:
+            if system_package is None:
+                raise ValueError("system runtime lease create requires system_package")
+            require_system_runtime_package(system_package)
 
         payload: JsonMap = {
             "sid": sid,
@@ -687,6 +1077,8 @@ class RuntimeLeaseClient:
             payload["c_roots"] = c_roots
         if mounts is not None:
             payload["mounts"] = mounts
+        if self.authority is not None:
+            payload["system_package"] = system_package
         return require_runtime_lease_ok(
             self.call_raw("create", payload),
             "runtime lease create",
@@ -703,6 +1095,7 @@ class RuntimeLeaseClient:
         lua_roots: list[str] | None = None,
         c_roots: list[str] | None = None,
         mounts: JsonValue | None = None,
+        system_package: JsonMap | None = None,
     ) -> "RuntimeLeaseHandle":
         """
         Create one runtime-lease handle object from one fresh create response.
@@ -720,6 +1113,7 @@ class RuntimeLeaseClient:
                 lua_roots=lua_roots,
                 c_roots=c_roots,
                 mounts=mounts,
+                system_package=system_package,
             ),
         )
 
@@ -841,16 +1235,17 @@ class RuntimeLeaseClient:
 
         return self.authority is not None
 
-    def _runtime_lease_function_name(self, action: str) -> str:
+    def _runtime_lease_function_name(self, action: RuntimeLeaseAction) -> str:
         """
         Resolve the concrete runtime-lease JSON FFI entrypoint name for one logical action.
         为单个逻辑动作解析具体的运行时租约 JSON FFI 入口名称。
         """
 
-        public_name = f"luaskills_ffi_runtime_lease_{action}_json"
+        action_value = runtime_lease_action_value(action)
+        public_name = f"luaskills_ffi_runtime_lease_{action_value}_json"
         if self.authority is None:
             return public_name
-        return f"luaskills_ffi_system_runtime_lease_{action}_json"
+        return f"luaskills_ffi_system_runtime_lease_{action_value}_json"
 
 
 class RuntimeLeaseHandle:
@@ -952,6 +1347,20 @@ def require_runtime_lease_ok(payload: JsonMap, action: str) -> JsonMap:
     raise RuntimeError(
         f"{action} failed: {payload.get('error_code') or 'unknown'}: {payload.get('message') or 'Unknown runtime lease error'}"
     )
+
+
+def require_system_runtime_package(payload: JsonMap) -> None:
+    """
+    Validate the exact trusted System Plugin package descriptor required by Rust.
+    校验 Rust 强制要求的精确信任 System Plugin 包描述符。
+    """
+
+    if set(payload) != {"id", "root", "dependencies_file"}:
+        raise ValueError("system_package must contain exactly id, root, and dependencies_file")
+    for field_name in ("id", "root", "dependencies_file"):
+        value = payload[field_name]
+        if not isinstance(value, str) or not value:
+            raise ValueError(f"system_package {field_name} must be one non-empty string")
 
 
 def require_runtime_lease_string_field(payload: JsonMap, field_name: str) -> str:

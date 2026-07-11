@@ -43,6 +43,10 @@ class FfiOwnedBuffer(ctypes.Structure):
 # 由 SDK 调用方实现的宿主侧 JSON provider callback。
 JsonProviderCallback = Callable[[Any], Any]
 
+# Host callback scheduled when managed-session events become readable.
+# 受管会话事件变为可读时调度的宿主回调。
+ManagedSessionWakeCallback = Callable[[int], None]
+
 # Host-tool bridge action names emitted by vulcan.host.*.
 # vulcan.host.* 发出的宿主工具桥接动作名称。
 HostToolJsonAction = Literal["list", "has", "call"]
@@ -68,6 +72,73 @@ class HostToolJsonRequest(TypedDict):
 # Host-side tool bridge JSON callback implemented by SDK callers.
 # 由 SDK 调用方实现的宿主工具桥接 JSON callback。
 HostToolJsonCallback = Callable[[HostToolJsonRequest], Any]
+
+# Skill operation progress plane names emitted by Rust progress events.
+# Rust 进度事件发出的 skill 操作平面名称。
+SkillOperationProgressPlane = Literal["Skills", "System"]
+
+# Skill operation progress action names emitted by Rust progress events.
+# Rust 进度事件发出的 skill 操作动作名称。
+SkillOperationProgressAction = Literal["Install", "Update", "Reload", "Uninstall", "Enable", "Disable"]
+
+# Skill install source type names attached to progress events.
+# 附加到进度事件上的 skill 安装来源类型名称。
+SkillOperationProgressSourceType = Literal["github", "official_hub", "url", "private_url_manifest"]
+
+
+class SkillOperationProgressEvent(TypedDict, total=False):
+    """
+    Skill lifecycle progress event delivered to the SDK callback.
+    传递给 SDK callback 的 skill 生命周期进度事件。
+    """
+
+    # Stable operation id shared by all events from one lifecycle operation.
+    # 同一个生命周期操作全部事件共享的稳定操作标识。
+    operation_id: str
+    # Monotonic sequence number inside the current operation.
+    # 当前操作内的单调递增序号。
+    sequence: int
+    # Operation plane that owns the lifecycle operation.
+    # 拥有该生命周期操作的操作平面。
+    plane: SkillOperationProgressPlane
+    # Lifecycle action represented by the event.
+    # 该事件表示的生命周期动作。
+    action: SkillOperationProgressAction
+    # Machine-readable phase name.
+    # 机器可读的阶段名称。
+    phase: str
+    # Machine-readable phase status.
+    # 机器可读的阶段状态。
+    status: str
+    # Optional target skill id.
+    # 可选目标 skill 标识。
+    skill_id: str | None
+    # Optional target root name.
+    # 可选目标 root 名称。
+    root_name: str | None
+    # Optional source type involved in the current phase.
+    # 当前阶段涉及的可选来源类型。
+    source_type: SkillOperationProgressSourceType | None
+    # Optional source locator involved in the current phase.
+    # 当前阶段涉及的可选来源定位值。
+    source_locator: str | None
+    # Optional completed byte count for download phases.
+    # 下载阶段的可选已完成字节数。
+    bytes_done: int | None
+    # Optional total byte count for download phases.
+    # 下载阶段的可选总字节数。
+    bytes_total: int | None
+    # Optional determinate progress percentage.
+    # 可选的确定性进度百分比。
+    percent: float | None
+    # Optional human-readable progress message.
+    # 可选的人类可读进度消息。
+    message: str | None
+
+
+# Host-side skill operation progress callback implemented by SDK callers.
+# 由 SDK 调用方实现的宿主侧 skill 操作进度 callback。
+SkillOperationProgressCallback = Callable[[SkillOperationProgressEvent], Any]
 
 # Standard model capability names exposed by vulcan.models.*.
 # vulcan.models.* 暴露的标准模型能力名称。
@@ -245,6 +316,15 @@ JSON_PROVIDER_CALLBACK_TYPE = ctypes.CFUNCTYPE(
     ctypes.POINTER(FfiOwnedBuffer),
 )
 
+# Native wake callback signature: engine id, opaque user data, and owned error output.
+# 原生唤醒回调签名：引擎标识、不可透明用户数据与拥有型错误输出。
+MANAGED_SESSION_WAKE_CALLBACK_TYPE = ctypes.CFUNCTYPE(
+    ctypes.c_int32,
+    ctypes.c_uint64,
+    ctypes.c_void_p,
+    ctypes.POINTER(FfiOwnedBuffer),
+)
+
 
 class JsonProviderSlotState:
     """
@@ -323,6 +403,7 @@ class LuaSkillsJsonFfi:
             "luaskills_ffi_set_lancedb_provider_json_callback",
         }
         self._describe_cache: dict[str, Any] | None = None
+        self._managed_session_wake_wrapper: MANAGED_SESSION_WAKE_CALLBACK_TYPE | None = None
 
     def call_json_no_input(self, function_name: str) -> Any:
         """
@@ -365,6 +446,40 @@ class LuaSkillsJsonFfi:
             self._describe_cache = result
         return self._describe_cache
 
+    def set_managed_session_wake_callback(self, engine_id: int, callback: ManagedSessionWakeCallback | None) -> None:
+        """
+        Register, replace, or clear one engine-level managed-session wake callback.
+        注册、替换或清除一个引擎级受管会话唤醒回调。
+        """
+
+        function_name = "luaskills_ffi_set_managed_session_wake_callback"
+        function = getattr(self.library, function_name)
+        function.argtypes = [ctypes.c_uint64, ctypes.c_void_p, ctypes.c_void_p, ctypes.POINTER(FfiOwnedBuffer)]
+        function.restype = ctypes.c_int32
+        wrapper: MANAGED_SESSION_WAKE_CALLBACK_TYPE | None = None
+        if callback is not None:
+            def invoke(callback_engine_id: int, _user_data: int, error_out: ctypes.POINTER(FfiOwnedBuffer)) -> int:
+                """
+                Invoke the Python callback without allowing exceptions across the C ABI boundary.
+                调用 Python 回调，同时阻止异常跨越 C ABI 边界。
+                """
+
+                try:
+                    callback(callback_engine_id)
+                    return 0
+                except Exception as exc:  # noqa: BLE001 - callback failures must cross as owned diagnostics.
+                    self._clone_bytes_into_owned_buffer(str(exc).encode("utf-8"), error_out)
+                    return 1
+
+            wrapper = MANAGED_SESSION_WAKE_CALLBACK_TYPE(invoke)
+        error_buffer = FfiOwnedBuffer()
+        callback_pointer = ctypes.cast(wrapper, ctypes.c_void_p) if wrapper is not None else None
+        status = function(engine_id, callback_pointer, None, ctypes.byref(error_buffer))
+        if status != 0:
+            message = self._read_owned_buffer(error_buffer) or "Unknown managed-session wake callback registration error"
+            raise LuaSkillsError(function_name, message)
+        self._managed_session_wake_wrapper = wrapper
+
     def set_sqlite_provider_json_callback(self, callback: JsonProviderCallback | None) -> None:
         """
         Register or clear the SQLite JSON provider callback.
@@ -398,6 +513,18 @@ class LuaSkillsJsonFfi:
         self._set_json_provider_callback(
             "host-tool",
             "luaskills_ffi_set_host_tool_json_callback",
+            callback,
+        )
+
+    def set_skill_operation_progress_json_callback(self, callback: SkillOperationProgressCallback | None) -> None:
+        """
+        Register or clear the skill operation progress JSON callback.
+        注册或清理 skill 操作进度 JSON callback。
+        """
+
+        self._set_json_provider_callback(
+            "skill-operation-progress",
+            "luaskills_ffi_set_skill_operation_progress_json_callback",
             callback,
         )
 
@@ -449,6 +576,14 @@ class LuaSkillsJsonFfi:
 
         self.set_host_tool_json_callback(None)
 
+    def clear_skill_operation_progress_json_callback(self) -> None:
+        """
+        Clear the skill operation progress JSON callback slot.
+        清理 skill 操作进度 JSON callback 槽位。
+        """
+
+        self.set_skill_operation_progress_json_callback(None)
+
     def clear_model_embed_json_callback(self) -> None:
         """
         Clear the model embedding JSON callback slot.
@@ -465,6 +600,19 @@ class LuaSkillsJsonFfi:
 
         self.set_model_llm_json_callback(None)
 
+    def clear_json_provider_callbacks(self) -> None:
+        """
+        Clear every JSON callback slot currently owned by this FFI bridge.
+        清理当前 FFI 桥持有的全部 JSON callback 槽位。
+        """
+
+        self.clear_sqlite_provider_json_callback()
+        self.clear_lancedb_provider_json_callback()
+        self.clear_host_tool_json_callback()
+        self.clear_skill_operation_progress_json_callback()
+        self.clear_model_embed_json_callback()
+        self.clear_model_llm_json_callback()
+
     def _decode_envelope(self, function_name: str, raw_buffer: FfiOwnedBuffer) -> Any:
         """
         Decode one owned JSON response envelope and release the native buffer.
@@ -475,7 +623,14 @@ class LuaSkillsJsonFfi:
         if raw_buffer.ptr and raw_buffer.len:
             text = ctypes.string_at(raw_buffer.ptr, raw_buffer.len).decode("utf-8")
         self.library.luaskills_ffi_buffer_free(raw_buffer)
-        envelope = json.loads(text)
+        if not text.strip():
+            raise LuaSkillsError(function_name, "empty JSON FFI response envelope")
+        try:
+            envelope = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise LuaSkillsError(function_name, f"invalid JSON FFI response envelope: {exc}") from exc
+        if not isinstance(envelope, dict):
+            raise LuaSkillsError(function_name, "JSON FFI response envelope must be one object")
         if envelope.get("ok") is not True:
             raise LuaSkillsError(function_name, envelope.get("error") or "Unknown LuaSkills FFI error")
         return envelope.get("result")

@@ -9,18 +9,21 @@ import hashlib
 import json
 import os
 import platform
+import base64
+import re
+import subprocess
 import shutil
 import tarfile
 import tempfile
 import urllib.request
 import zipfile
 from enum import Enum
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any, Callable
 
 from .roots import normalized_path
 
-DEFAULT_LUASKILLS_VERSION = "v0.4.6"
+DEFAULT_LUASKILLS_VERSION = "v0.5.0"
 """
 Default LuaSkills release tag used by SDK runtime installation.
 SDK 运行时安装使用的默认 LuaSkills 发布标签。
@@ -48,6 +51,42 @@ DEFAULT_VLDB_LANCEDB_VERSION = "v0.1.5"
 """
 Default vldb-lancedb release tag used by SDK runtime installation.
 SDK 运行时安装使用的默认 vldb-lancedb 发布标签。
+"""
+
+SHA256_HEX_PATTERN = re.compile(r"^[0-9a-fA-F]{64}$")
+"""
+Strict SHA-256 hexadecimal digest pattern used for downloaded runtime assets.
+下载运行时资产使用的严格 SHA-256 十六进制摘要模式。
+"""
+
+SHA512_BASE64_PATTERN = re.compile(r"^[A-Za-z0-9+/]+={0,2}$")
+"""
+Strict SHA-512 Base64 digest pattern used for npm integrity strings.
+npm integrity 字符串使用的严格 SHA-512 Base64 摘要模式。
+"""
+
+DEFAULT_MANAGED_PYTHON_VERSION = "3.12.7"
+"""
+Default managed CPython version installed for Lua-driven child runtimes.
+Lua 调度子运行时安装使用的默认受管 CPython 版本。
+"""
+
+DEFAULT_MANAGED_UV_VERSION = "0.11.17"
+"""
+Default standalone uv version used to install managed Python environments.
+安装受管 Python 环境使用的默认独立 uv 版本。
+"""
+
+DEFAULT_MANAGED_NODE_VERSION = "22.11.0"
+"""
+Default managed Node.js version installed for Lua-driven child runtimes.
+Lua 调度子运行时安装使用的默认受管 Node.js 版本。
+"""
+
+DEFAULT_MANAGED_PNPM_VERSION = "9.15.0"
+"""
+Default pnpm version used to install managed Node.js dependencies.
+安装受管 Node.js 依赖使用的默认 pnpm 版本。
 """
 
 RUNTIME_MANIFEST_FILE_NAME = "luaskills-sdk-runtime-manifest.json"
@@ -85,6 +124,43 @@ class RuntimeDatabasePreset(str, Enum):
     """
     Let the host provide JSON callbacks instead of native VLDB assets.
     由宿主提供 JSON callback，而不是安装原生 VLDB 资产。
+    """
+
+
+class ManagedRuntimeTarget(str, Enum):
+    """
+    Managed child runtime group selected by SDK installation.
+    SDK 安装时选择的受管子运行时分组。
+    """
+
+    NONE = "none"
+    """
+    Do not install managed child runtimes.
+    不安装受管子运行时。
+    """
+
+    ALL = "all"
+    """
+    Install Python, uv, Node.js, and pnpm.
+    安装 Python、uv、Node.js 与 pnpm。
+    """
+
+    PYTHON = "python"
+    """
+    Install Python and uv.
+    安装 Python 与 uv。
+    """
+
+    NODE = "node"
+    """
+    Install Node.js and pnpm.
+    安装 Node.js 与 pnpm。
+    """
+
+    PACKAGE_MANAGERS = "package-managers"
+    """
+    Install uv and pnpm, including managed Node.js required by pnpm.
+    安装 uv 与 pnpm，并包含 pnpm 所需的受管 Node.js。
     """
 
 
@@ -131,6 +207,12 @@ def build_runtime_install_manifest(
     vldb_controller_repo: str = "OpenVulcan/vldb-controller",
     vldb_sqlite_repo: str = "OpenVulcan/vldb-sqlite",
     vldb_lancedb_repo: str = "OpenVulcan/vldb-lancedb",
+    managed_runtimes: ManagedRuntimeTarget | str = ManagedRuntimeTarget.NONE,
+    managed_python_version: str = DEFAULT_MANAGED_PYTHON_VERSION,
+    managed_uv_version: str = DEFAULT_MANAGED_UV_VERSION,
+    managed_node_version: str = DEFAULT_MANAGED_NODE_VERSION,
+    managed_pnpm_version: str = DEFAULT_MANAGED_PNPM_VERSION,
+    force_managed_runtimes: bool = False,
 ) -> dict[str, Any]:
     """
     Build one deterministic runtime installation manifest.
@@ -168,6 +250,14 @@ def build_runtime_install_manifest(
         "platform": target,
         "assets": assets,
         "host_options_patch": build_host_options_patch(resolved_root, preset, target, assets),
+        "managed_runtimes": build_managed_runtime_install_plan(
+            resolved_root,
+            managed_runtimes,
+            managed_python_version,
+            managed_uv_version,
+            managed_node_version,
+            managed_pnpm_version,
+        ),
     }
 
 
@@ -183,6 +273,8 @@ def install_runtime_assets(**options: Any) -> dict[str, Any]:
     with tempfile.TemporaryDirectory(prefix="luaskills-runtime-assets-") as temporary_root:
         for asset in manifest["assets"]:
             install_one_asset(runtime_root, asset, Path(temporary_root), manifest["platform"])
+    if manifest.get("managed_runtimes"):
+        install_managed_runtimes(runtime_root, manifest["managed_runtimes"], bool(options.get("force_managed_runtimes")))
     manifest["host_options_patch"] = build_host_options_patch(runtime_root, normalize_database_preset(manifest["database_mode"]), manifest["platform"], manifest["assets"])
     write_runtime_install_manifest(manifest)
     return manifest
@@ -209,7 +301,7 @@ def load_runtime_install_manifest(runtime_root: str | os.PathLike[str]) -> dict[
     manifest_path = runtime_manifest_path(runtime_root)
     if not manifest_path.exists():
         return None
-    return json.loads(manifest_path.read_text(encoding="utf-8"))
+    return decode_runtime_install_manifest(manifest_path, manifest_path.read_text(encoding="utf-8"))
 
 
 def runtime_manifest_path(runtime_root: str | os.PathLike[str]) -> Path:
@@ -221,13 +313,86 @@ def runtime_manifest_path(runtime_root: str | os.PathLike[str]) -> Path:
     return Path(runtime_root).expanduser().resolve() / "resources" / RUNTIME_MANIFEST_FILE_NAME
 
 
+def decode_runtime_install_manifest(manifest_path: Path, raw: str) -> dict[str, Any]:
+    """
+    Decode one runtime install manifest with path-aware diagnostics.
+    使用带路径上下文的诊断解码单个运行时安装清单。
+    """
+
+    if not raw.strip():
+        raise ValueError(f"runtime install manifest {manifest_path} is empty")
+    try:
+        manifest = json.loads(raw)
+    except json.JSONDecodeError as error:
+        raise ValueError(f"runtime install manifest {manifest_path} is invalid JSON: {error}") from error
+    if not isinstance(manifest, dict):
+        raise ValueError(f"runtime install manifest {manifest_path} must be one JSON object")
+    return manifest
+
+
 def host_options_from_runtime_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
     """
     Convert one runtime manifest into host option overrides.
     将单个运行时清单转换为宿主选项覆盖。
     """
 
-    return dict(manifest.get("host_options_patch") or {})
+    runtime_root = manifest.get("runtime_root")
+    if not isinstance(runtime_root, str) or not runtime_root.strip():
+        raise ValueError("runtime manifest runtime_root must be a string path")
+    return sanitize_runtime_manifest_host_options(Path(runtime_root), manifest.get("host_options_patch") or {})
+
+
+def sanitize_runtime_manifest_host_options(runtime_root: Path, patch: object) -> dict[str, Any]:
+    """
+    Validate runtime-root path fields from one manifest host option patch.
+    校验单个 manifest 宿主选项补丁中受 runtime-root 约束的路径字段。
+    """
+
+    if not isinstance(patch, dict):
+        raise ValueError("host_options_patch must be one object")
+    sanitized = dict(patch)
+    for key in ["sqlite_library_path", "lancedb_library_path"]:
+        sanitized_path = sanitize_runtime_manifest_path(runtime_root, sanitized.get(key), key)
+        if sanitized_path is not None:
+            sanitized[key] = sanitized_path
+    if "space_controller" in sanitized and sanitized["space_controller"] is not None:
+        space_controller = sanitized["space_controller"]
+        if not isinstance(space_controller, dict):
+            raise ValueError("host_options_patch.space_controller must be one object")
+        space_copy = dict(space_controller)
+        sanitized_path = sanitize_runtime_manifest_path(runtime_root, space_copy.get("executable_path"), "space_controller.executable_path")
+        if sanitized_path is not None:
+            space_copy["executable_path"] = sanitized_path
+        sanitized["space_controller"] = space_copy
+    return sanitized
+
+
+def sanitize_runtime_manifest_path(runtime_root: Path, value: object, context: str) -> str | None:
+    """
+    Validate one runtime-root-scoped host option path.
+    校验单个受 runtime-root 约束的宿主选项路径。
+    """
+
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"host_options_patch.{context} must be a string path")
+    if not value.strip() or "\x00" in value:
+        raise ValueError(f"host_options_patch.{context} must be a path inside runtime root")
+    root_path = runtime_root.expanduser().resolve()
+    value_path = Path(value)
+    if PureWindowsPath(value).is_absolute() and not value_path.is_absolute():
+        raise ValueError(f"host_options_patch.{context} must be a path inside runtime root")
+    if value_path.is_absolute():
+        candidate_path = value_path.expanduser().resolve()
+    else:
+        segments = value.replace("\\", "/").split("/")
+        if any(segment in {"", ".", ".."} for segment in segments):
+            raise ValueError(f"host_options_patch.{context} must be a path inside runtime root")
+        candidate_path = (root_path / value).resolve()
+    if candidate_path == root_path or root_path not in candidate_path.parents:
+        raise ValueError(f"host_options_patch.{context} escapes runtime root: {value}")
+    return normalized_path(candidate_path)
 
 
 def resolve_luaskills_library_path_from_runtime(runtime_root: str | os.PathLike[str], target: dict[str, str] | None = None) -> Path | None:
@@ -255,6 +420,91 @@ def normalize_database_preset(value: RuntimeDatabasePreset | str) -> RuntimeData
         return value if isinstance(value, RuntimeDatabasePreset) else RuntimeDatabasePreset(value)
     except ValueError as error:
         raise ValueError(f"unsupported database preset: {value}") from error
+
+
+def normalize_managed_runtime_target(value: ManagedRuntimeTarget | str | None) -> ManagedRuntimeTarget:
+    """
+    Normalize one managed runtime target string.
+    归一化单个受管运行时目标字符串。
+    """
+
+    try:
+        return value if isinstance(value, ManagedRuntimeTarget) else ManagedRuntimeTarget(value or ManagedRuntimeTarget.NONE.value)
+    except ValueError as error:
+        raise ValueError(f"unsupported managed runtime target: {value}") from error
+
+
+def resolve_managed_runtime_platform_target(system: str | None = None, machine: str | None = None) -> dict[str, str]:
+    """
+    Return the managed runtime platform target for the current Python process.
+    返回当前 Python 进程对应的受管运行时平台目标。
+    """
+
+    os_name = (system or platform.system()).lower()
+    arch_name = normalize_arch(machine or platform.machine())
+    if os_name == "windows" and arch_name == "x86_64":
+        return {
+            "platform_key": "windows-x64",
+            "uv_asset_name": "uv-x86_64-pc-windows-msvc.zip",
+            "node_asset_template": "node-v{version}-win-x64.zip",
+            "node_extract_template": "node-v{version}-win-x64",
+            "uv_executable": "uv.exe",
+            "node_executable": "node.exe",
+        }
+    if os_name == "darwin" and arch_name in {"x86_64", "aarch64"}:
+        node_arch = "x64" if arch_name == "x86_64" else "arm64"
+        platform_key = "macos-x64" if arch_name == "x86_64" else "macos-arm64"
+        return managed_unix_target(platform_key, arch_name, node_arch, "darwin", ".tar.gz")
+    if os_name == "linux" and arch_name in {"x86_64", "aarch64"}:
+        node_arch = "x64" if arch_name == "x86_64" else "arm64"
+        platform_key = "linux-x64" if arch_name == "x86_64" else "linux-arm64"
+        return managed_unix_target(platform_key, arch_name, node_arch, "linux", ".tar.xz")
+    raise ValueError(f"unsupported managed runtime platform: {os_name}/{arch_name}")
+
+
+def build_managed_runtime_install_plan(
+    runtime_root: Path,
+    target: ManagedRuntimeTarget | str,
+    python_version: str,
+    uv_version: str,
+    node_version: str,
+    pnpm_version: str,
+) -> dict[str, Any] | None:
+    """
+    Build one managed runtime installation plan for the SDK manifest.
+    为 SDK 清单构造一个受管运行时安装计划。
+    """
+
+    normalized_target = normalize_managed_runtime_target(target)
+    if normalized_target == ManagedRuntimeTarget.NONE:
+        return None
+    managed_platform = resolve_managed_runtime_platform_target()
+    return {
+        "target": normalized_target.value,
+        "platform": managed_platform,
+        "python_version": python_version,
+        "uv_version": uv_version,
+        "node_version": node_version,
+        "pnpm_version": pnpm_version,
+        "installed_paths": managed_runtime_installed_paths(runtime_root, managed_platform, python_version, uv_version, node_version, pnpm_version),
+    }
+
+
+def managed_unix_target(platform_key: str, rust_arch: str, node_arch: str, node_os: str, node_archive_ext: str) -> dict[str, str]:
+    """
+    Build one Unix-like managed runtime target descriptor.
+    构造一个类 Unix 受管运行时目标描述。
+    """
+
+    uv_os = "apple-darwin" if node_os == "darwin" else "unknown-linux-gnu"
+    return {
+        "platform_key": platform_key,
+        "uv_asset_name": f"uv-{rust_arch}-{uv_os}.tar.gz",
+        "node_asset_template": f"node-v{{version}}-{node_os}-{node_arch}{node_archive_ext}",
+        "node_extract_template": f"node-v{{version}}-{node_os}-{node_arch}",
+        "uv_executable": "uv",
+        "node_executable": "bin/node",
+    }
 
 
 def normalize_arch(value: str) -> str:
@@ -496,8 +746,232 @@ def ensure_runtime_directories(runtime_root: Path) -> None:
     确保 SDK 管理资产使用的 runtime 目录存在。
     """
 
-    for directory_name in ["bin", "libs", "include", "lua_packages", "licenses", "resources"]:
+    for directory_name in ["bin", "libs", "include", "lua_packages", "licenses", "resources", "dependencies"]:
         (runtime_root / directory_name).mkdir(parents=True, exist_ok=True)
+
+
+def resolve_managed_runtime_installed_path(runtime_root: Path, plan: dict[str, Any], runtime_name: str) -> Path:
+    """
+    Resolve one managed runtime installation path inside the runtime root.
+    在 runtime root 内解析单个受管运行时安装路径。
+    """
+
+    installed_paths = plan.get("installed_paths")
+    if not isinstance(installed_paths, dict):
+        raise ValueError("managed runtime installed_paths must be one object")
+    path_value = installed_paths.get(runtime_name)
+    return resolve_managed_runtime_child_path(runtime_root, path_value, f"managed runtime installed path for {runtime_name}")
+
+
+def resolve_managed_runtime_child_path(root: Path, path_value: object, context: str) -> Path:
+    """
+    Resolve one relative child path and reject paths outside the root.
+    解析单个相对子路径，并拒绝 root 外部路径。
+    """
+
+    if not isinstance(path_value, str):
+        raise ValueError(f"{context} must be a string")
+    if not path_value or "\x00" in path_value or Path(path_value).is_absolute() or PureWindowsPath(path_value).is_absolute():
+        raise ValueError(f"{context} must be a relative path inside its root")
+    normalized_segments = path_value.replace("\\", "/").split("/")
+    if any(segment in {"", ".", ".."} for segment in normalized_segments):
+        raise ValueError(f"{context} must be a relative path inside its root")
+    resolved_root = root.resolve()
+    unresolved_child = resolved_root / path_value
+    resolved_child = unresolved_child.resolve()
+    if resolved_child == resolved_root or resolved_root not in resolved_child.parents:
+        raise ValueError(f"{context} escapes its root: {path_value}")
+    return resolved_child
+
+
+def install_managed_runtimes(runtime_root: Path, plan: dict[str, Any], force: bool = False) -> None:
+    """
+    Install every managed child runtime selected by one plan.
+    安装一个计划选择的全部受管子运行时。
+    """
+
+    target = normalize_managed_runtime_target(plan.get("target"))
+    if target in {ManagedRuntimeTarget.ALL, ManagedRuntimeTarget.PYTHON}:
+        install_managed_python_runtime(runtime_root, plan, force)
+    if target in {ManagedRuntimeTarget.ALL, ManagedRuntimeTarget.NODE}:
+        install_managed_node_runtime(runtime_root, plan, force)
+        install_managed_pnpm_runtime(runtime_root, plan, force)
+    if target == ManagedRuntimeTarget.PACKAGE_MANAGERS:
+        install_managed_uv_runtime(runtime_root, plan, force)
+        install_managed_node_runtime(runtime_root, plan, force)
+        install_managed_pnpm_runtime(runtime_root, plan, force)
+
+
+def install_managed_uv_runtime(runtime_root: Path, plan: dict[str, Any], force: bool) -> Path:
+    """
+    Install one managed uv executable.
+    安装一个受管 uv 可执行文件。
+    """
+
+    uv_target = resolve_managed_runtime_installed_path(runtime_root, plan, "uv")
+    uv_executable = resolve_managed_runtime_child_path(uv_target, plan["platform"]["uv_executable"], "managed uv executable")
+    if uv_executable.exists() and not force:
+        return uv_executable
+    if force and uv_target.exists():
+        shutil.rmtree(uv_target)
+    asset_name = plan["platform"]["uv_asset_name"]
+    asset_url = f"https://github.com/astral-sh/uv/releases/download/{plan['uv_version']}/{asset_name}"
+    with tempfile.TemporaryDirectory(prefix="luaskills-managed-uv-") as temporary_text:
+        temporary_root = Path(temporary_text)
+        archive_path = temporary_root / asset_name
+        checksum_path = temporary_root / f"{asset_name}.sha256"
+        extract_directory = temporary_root / "extract"
+        urllib.request.urlretrieve(asset_url, archive_path)
+        urllib.request.urlretrieve(f"{asset_url}.sha256", checksum_path)
+        verify_sha256(archive_path, checksum_path.read_text(encoding="utf-8"))
+        extract_archive(archive_path, extract_directory)
+        executable_name = "uv.exe" if platform.system().lower() == "windows" else "uv"
+        extracted_uv = find_file(extract_directory, lambda name: name == executable_name)
+        if extracted_uv is None:
+            raise FileNotFoundError(f"uv executable was not found in {asset_name}")
+        uv_target.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(extracted_uv, uv_executable)
+        uv_executable.chmod(0o755)
+    write_managed_runtime_manifest(
+        uv_target,
+        {
+            "schema_version": 1,
+            "runtime": "uv",
+            "version": plan["uv_version"],
+            "platform": plan["platform"]["platform_key"],
+            "executable": plan["platform"]["uv_executable"],
+            "source": asset_url,
+        },
+    )
+    run_process([str(uv_executable), "--version"])
+    return uv_executable
+
+
+def install_managed_python_runtime(runtime_root: Path, plan: dict[str, Any], force: bool) -> None:
+    """
+    Install one managed CPython runtime through managed uv.
+    通过受管 uv 安装一个受管 CPython 运行时。
+    """
+
+    uv_executable = install_managed_uv_runtime(runtime_root, plan, force)
+    python_root = resolve_managed_runtime_installed_path(runtime_root, plan, "python")
+    if (python_root / "runtime-manifest.json").exists() and not force:
+        return
+    if force and python_root.exists():
+        shutil.rmtree(python_root)
+    python_root.mkdir(parents=True, exist_ok=True)
+    install_command = [str(uv_executable), "python", "install", plan["python_version"]]
+    if force:
+        install_command.append("--reinstall")
+    run_process(install_command, env={"UV_PYTHON_INSTALL_DIR": str(python_root)})
+    python_executable_text = run_process_capture([str(uv_executable), "python", "find", plan["python_version"]], env={"UV_PYTHON_INSTALL_DIR": str(python_root)})
+    python_executable = Path(python_executable_text.strip().splitlines()[0])
+    if not python_executable.exists():
+        raise FileNotFoundError(f"uv installed Python {plan['python_version']} but no interpreter path could be resolved")
+    write_managed_runtime_manifest(
+        python_root,
+        {
+            "schema_version": 1,
+            "runtime": "python",
+            "version": plan["python_version"],
+            "platform": plan["platform"]["platform_key"],
+            "executable": str(python_executable.resolve().relative_to(python_root.resolve())).replace("\\", "/"),
+            "source": "uv-managed-python",
+            "package_manager": "uv",
+            "package_manager_version": plan["uv_version"],
+        },
+    )
+    run_process([str(python_executable), "--version"])
+
+
+def install_managed_node_runtime(runtime_root: Path, plan: dict[str, Any], force: bool) -> Path:
+    """
+    Install one managed Node.js archive.
+    安装一个受管 Node.js 归档。
+    """
+
+    node_target = resolve_managed_runtime_installed_path(runtime_root, plan, "node")
+    node_executable = resolve_managed_runtime_child_path(node_target, plan["platform"]["node_executable"], "managed Node.js executable")
+    if node_executable.exists() and not force:
+        return node_executable
+    if force and node_target.exists():
+        shutil.rmtree(node_target)
+    asset_name = render_version_template(plan["platform"]["node_asset_template"], plan["node_version"])
+    extract_name = render_version_template(plan["platform"]["node_extract_template"], plan["node_version"])
+    base_url = f"https://nodejs.org/dist/v{plan['node_version']}"
+    asset_url = f"{base_url}/{asset_name}"
+    with tempfile.TemporaryDirectory(prefix="luaskills-managed-node-") as temporary_text:
+        temporary_root = Path(temporary_text)
+        archive_path = temporary_root / asset_name
+        shasums_path = temporary_root / "SHASUMS256.txt"
+        extract_directory = temporary_root / "extract"
+        urllib.request.urlretrieve(asset_url, archive_path)
+        urllib.request.urlretrieve(f"{base_url}/SHASUMS256.txt", shasums_path)
+        verify_named_sha256(archive_path, shasums_path.read_text(encoding="utf-8"), asset_name)
+        extract_archive(archive_path, extract_directory)
+        extracted_root = extract_directory / extract_name
+        if not extracted_root.exists():
+            raise FileNotFoundError(f"Node archive root '{extract_name}' was not found in {asset_name}")
+        node_target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(extracted_root, node_target, dirs_exist_ok=True)
+    write_managed_runtime_manifest(
+        node_target,
+        {
+            "schema_version": 1,
+            "runtime": "node",
+            "version": plan["node_version"],
+            "platform": plan["platform"]["platform_key"],
+            "executable": plan["platform"]["node_executable"],
+            "source": asset_url,
+        },
+    )
+    run_process([str(node_executable), "--version"])
+    return node_executable
+
+
+def install_managed_pnpm_runtime(runtime_root: Path, plan: dict[str, Any], force: bool) -> None:
+    """
+    Install one managed pnpm package without changing global npm state.
+    安装一个受管 pnpm 包，且不修改全局 npm 状态。
+    """
+
+    node_executable = install_managed_node_runtime(runtime_root, plan, force)
+    pnpm_target = resolve_managed_runtime_installed_path(runtime_root, plan, "pnpm")
+    pnpm_entry = pnpm_target / "bin" / "pnpm.cjs"
+    if pnpm_entry.exists() and not force:
+        return
+    if force and pnpm_target.exists():
+        shutil.rmtree(pnpm_target)
+    metadata = json.loads(download_text(f"https://registry.npmjs.org/pnpm/{plan['pnpm_version']}"))
+    tarball_url = str(metadata["dist"]["tarball"])
+    integrity = str(metadata["dist"]["integrity"])
+    if not integrity.startswith("sha512-"):
+        raise ValueError(f"pnpm metadata for {plan['pnpm_version']} does not contain a sha512 integrity tarball")
+    with tempfile.TemporaryDirectory(prefix="luaskills-managed-pnpm-") as temporary_text:
+        temporary_root = Path(temporary_text)
+        tarball_path = temporary_root / f"pnpm-{plan['pnpm_version']}.tgz"
+        extract_directory = temporary_root / "extract"
+        urllib.request.urlretrieve(tarball_url, tarball_path)
+        verify_sha512_integrity(tarball_path, integrity)
+        extract_archive(tarball_path, extract_directory)
+        package_root = extract_directory / "package"
+        if not package_root.exists():
+            raise FileNotFoundError("pnpm package root was not found in tarball")
+        pnpm_target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(package_root, pnpm_target, dirs_exist_ok=True)
+    write_managed_runtime_manifest(
+        pnpm_target,
+        {
+            "schema_version": 1,
+            "runtime": "pnpm",
+            "version": plan["pnpm_version"],
+            "platform": "any",
+            "executable": "bin/pnpm.cjs",
+            "source": tarball_url,
+            "node_runtime_version": plan["node_version"],
+        },
+    )
+    run_process([str(node_executable), str(pnpm_entry), "--version"])
 
 
 def install_one_asset(runtime_root: Path, asset: dict[str, Any], temporary_root: Path, target: dict[str, str]) -> None:
@@ -542,10 +1016,70 @@ def verify_sha256(file_path: Path, sha256_text: str) -> None:
     使用 SHA-256 旁路文件校验单个已下载归档。
     """
 
-    expected_hash = sha256_text.strip().split()[0].lower()
+    tokens = sha256_text.strip().split()
+    if not tokens:
+        raise ValueError(f"invalid SHA-256 sidecar for {file_path}")
+    expected_hash = normalize_sha256_hash(tokens[0], f"SHA-256 sidecar for {file_path}")
     actual_hash = file_sha256(file_path)
     if expected_hash != actual_hash:
         raise ValueError(f"SHA-256 mismatch for {file_path}: expected {expected_hash}, got {actual_hash}")
+
+
+def verify_named_sha256(file_path: Path, sha256_text: str, asset_name: str) -> None:
+    """
+    Verify one downloaded archive against a named SHA-256 manifest.
+    使用包含文件名的 SHA-256 清单校验单个已下载归档。
+    """
+
+    expected_hash = ""
+    for line in sha256_text.splitlines():
+        parts = line.strip().split()
+        if len(parts) >= 2 and parts[1] == asset_name:
+            expected_hash = normalize_sha256_hash(parts[0], f"checksum entry for {asset_name}")
+            break
+    if not expected_hash:
+        raise ValueError(f"checksum entry for {asset_name} was not found")
+    actual_hash = file_sha256(file_path)
+    if expected_hash != actual_hash:
+        raise ValueError(f"SHA-256 mismatch for {file_path}: expected {expected_hash}, got {actual_hash}")
+
+
+def verify_sha512_integrity(file_path: Path, integrity: str) -> None:
+    """
+    Verify one downloaded npm tarball against an integrity string.
+    使用 npm integrity 字符串校验单个已下载 tarball。
+    """
+
+    expected_digest = normalize_sha512_integrity_digest(file_path, integrity)
+    actual_digest = file_sha512_base64(file_path)
+    if expected_digest != actual_digest:
+        raise ValueError(f"SHA-512 integrity mismatch for {file_path}")
+
+
+def normalize_sha256_hash(hash_text: str, context: str) -> str:
+    """
+    Normalize and validate one SHA-256 hexadecimal digest.
+    归一化并校验单个 SHA-256 十六进制摘要。
+    """
+
+    normalized = hash_text.lower()
+    if not SHA256_HEX_PATTERN.fullmatch(normalized):
+        raise ValueError(f"invalid SHA-256 digest in {context}: {hash_text}")
+    return normalized
+
+
+def normalize_sha512_integrity_digest(file_path: Path, integrity: str) -> str:
+    """
+    Extract and validate one SHA-512 Base64 digest from an integrity string.
+    从 integrity 字符串提取并校验单个 SHA-512 Base64 摘要。
+    """
+
+    if not integrity.startswith("sha512-"):
+        raise ValueError(f"invalid SHA-512 integrity for {file_path}")
+    digest = integrity.removeprefix("sha512-")
+    if not digest or len(digest) % 4 != 0 or not SHA512_BASE64_PATTERN.fullmatch(digest):
+        raise ValueError(f"invalid SHA-512 integrity for {file_path}")
+    return digest
 
 
 def file_sha256(file_path: Path) -> str:
@@ -559,6 +1093,19 @@ def file_sha256(file_path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def file_sha512_base64(file_path: Path) -> str:
+    """
+    Compute the SHA-512 hash for one file as Base64.
+    计算单个文件的 SHA-512 Base64 哈希。
+    """
+
+    digest = hashlib.sha512()
+    with file_path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return base64.b64encode(digest.digest()).decode("ascii")
 
 
 def extract_archive(archive_path: Path, destination: Path) -> None:
@@ -595,11 +1142,23 @@ def validate_tar_members(destination: Path, archive: tarfile.TarFile) -> None:
     """
 
     for member in archive.getmembers():
+        validate_tar_member_type(member)
         validate_archive_member_path(destination, member.name)
         if member.issym():
             validate_archive_symlink_target(destination, member.name, member.linkname)
         if member.islnk():
             validate_archive_member_path(destination, member.linkname)
+
+
+def validate_tar_member_type(member: tarfile.TarInfo) -> None:
+    """
+    Reject tar members that are not regular files, directories, or links.
+    拒绝非常规文件、目录或链接的 tar 成员。
+    """
+
+    if member.isfile() or member.isdir() or member.issym() or member.islnk():
+        return
+    raise ValueError(f"unsupported tar member type: {member.name}")
 
 
 def validate_archive_symlink_target(destination: Path, member_name: str, link_name: str) -> None:
@@ -621,6 +1180,8 @@ def validate_archive_member_path(destination: Path, member_name: str) -> None:
     拒绝解析后解压路径逃逸目标目录的归档成员。
     """
 
+    if not member_name or "\x00" in member_name or Path(member_name).is_absolute() or PureWindowsPath(member_name).is_absolute():
+        raise ValueError(f"unsafe archive member path: {member_name}")
     resolved_destination = destination.resolve()
     resolved_member_path = (resolved_destination / member_name).resolve()
     if resolved_member_path != resolved_destination and resolved_destination not in resolved_member_path.parents:
@@ -708,6 +1269,72 @@ def find_file(root: Path, predicate: Callable[[str], bool]) -> Path | None:
         if path.is_file() and predicate(path.name):
             return path
     return None
+
+
+def managed_runtime_installed_paths(
+    _runtime_root: Path,
+    target: dict[str, str],
+    python_version: str,
+    uv_version: str,
+    node_version: str,
+    pnpm_version: str,
+) -> dict[str, str]:
+    """
+    Build relative managed runtime installation paths under one runtime root.
+    构造单个 runtime root 下的受管运行时相对安装路径。
+    """
+
+    platform_key = target["platform_key"]
+    return {
+        "python": f"dependencies/runtimes/python/cpython-{python_version}-{platform_key}",
+        "uv": f"dependencies/runtimes/python/uv-{uv_version}-{platform_key}",
+        "node": f"dependencies/runtimes/node/node-{node_version}-{platform_key}",
+        "pnpm": f"dependencies/runtimes/node/pnpm-{pnpm_version}",
+    }
+
+
+def write_managed_runtime_manifest(directory: Path, manifest: dict[str, Any]) -> None:
+    """
+    Write one managed runtime manifest without a UTF-8 BOM.
+    写入一个不带 UTF-8 BOM 的受管运行时 manifest。
+    """
+
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "runtime-manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def render_version_template(template: str, version: str) -> str:
+    """
+    Render one `{version}` template used by upstream managed runtime archives.
+    渲染一个上游受管运行时归档使用的 `{version}` 模板。
+    """
+
+    return template.replace("{version}", version)
+
+
+def run_process(command: list[str], env: dict[str, str] | None = None) -> None:
+    """
+    Run one child process and raise when it fails.
+    运行单个子进程，并在失败时抛出异常。
+    """
+
+    merged_env = os.environ.copy()
+    if env:
+        merged_env.update(env)
+    subprocess.run(command, env=merged_env, check=True)
+
+
+def run_process_capture(command: list[str], env: dict[str, str] | None = None) -> str:
+    """
+    Run one child process and capture stdout.
+    运行单个子进程并捕获 stdout。
+    """
+
+    merged_env = os.environ.copy()
+    if env:
+        merged_env.update(env)
+    result = subprocess.run(command, env=merged_env, check=True, text=True, capture_output=True)
+    return result.stdout
 
 
 def utc_now_iso() -> str:

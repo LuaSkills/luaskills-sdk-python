@@ -13,7 +13,7 @@ from typing import Any
 
 from .client import LuaSkillsClient
 from .roots import RuntimeRoots
-from .runtime_assets import RuntimeDatabasePreset, build_runtime_install_manifest, install_runtime_assets
+from .runtime_assets import ManagedRuntimeTarget, RuntimeDatabasePreset, build_runtime_install_manifest, install_runtime_assets
 from .types import Authority, RuntimeSkillRoot
 
 
@@ -82,6 +82,12 @@ def build_parser() -> argparse.ArgumentParser:
     install_runtime_parser.add_argument("--vldb-controller-repo", default="OpenVulcan/vldb-controller")
     install_runtime_parser.add_argument("--vldb-sqlite-repo", default="OpenVulcan/vldb-sqlite")
     install_runtime_parser.add_argument("--vldb-lancedb-repo", default="OpenVulcan/vldb-lancedb")
+    install_runtime_parser.add_argument("--managed-runtimes", default=ManagedRuntimeTarget.NONE.value, choices=[target.value for target in ManagedRuntimeTarget])
+    install_runtime_parser.add_argument("--managed-python-version", default=None)
+    install_runtime_parser.add_argument("--managed-uv-version", default=None)
+    install_runtime_parser.add_argument("--managed-node-version", default=None)
+    install_runtime_parser.add_argument("--managed-pnpm-version", default=None)
+    install_runtime_parser.add_argument("--force-managed-runtimes", action="store_true")
 
     one_value_commands = ["help-detail", "is-skill", "skill-name", "enable", "disable", "system-enable", "system-disable"]
     for command in one_value_commands:
@@ -227,6 +233,8 @@ def runtime_install_options(args: argparse.Namespace, runtime_root: Path) -> dic
         "vldb_controller_repo": args.vldb_controller_repo,
         "vldb_sqlite_repo": args.vldb_sqlite_repo,
         "vldb_lancedb_repo": args.vldb_lancedb_repo,
+        "managed_runtimes": args.managed_runtimes,
+        "force_managed_runtimes": args.force_managed_runtimes,
     }
     if args.luaskills_version:
         options["luaskills_version"] = args.luaskills_version
@@ -238,6 +246,14 @@ def runtime_install_options(args: argparse.Namespace, runtime_root: Path) -> dic
         options["vldb_sqlite_version"] = args.vldb_sqlite_version
     if args.vldb_lancedb_version:
         options["vldb_lancedb_version"] = args.vldb_lancedb_version
+    if args.managed_python_version:
+        options["managed_python_version"] = args.managed_python_version
+    if args.managed_uv_version:
+        options["managed_uv_version"] = args.managed_uv_version
+    if args.managed_node_version:
+        options["managed_node_version"] = args.managed_node_version
+    if args.managed_pnpm_version:
+        options["managed_pnpm_version"] = args.managed_pnpm_version
     return options
 
 
