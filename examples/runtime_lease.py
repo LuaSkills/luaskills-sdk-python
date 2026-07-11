@@ -49,7 +49,7 @@ def main() -> None:
     system_package = {
         "id": "runtime-lease-example",
         "root": str(system_package_root),
-        "dependencies_file": str(system_package_root / "dependencies.json"),
+        "dependencies_file": "dependencies.json",
     }
 
     with LuaSkillsClient(library_path=resolve_library_path(), runtime_root=runtime_root) as client:
