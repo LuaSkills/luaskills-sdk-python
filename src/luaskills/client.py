@@ -14,7 +14,18 @@ from urllib.parse import urlparse
 from .ffi import LuaSkillsJsonFfi, ManagedSessionWakeCallback
 from .roots import RuntimeRoots, normalized_path
 from .runtime_assets import host_options_from_runtime_manifest, load_runtime_install_manifest
-from .types import Authority, JsonValue, LuaInvocationContext, RuntimeSkillRoot, SkillInstallSourceType, authority_value, roots_to_json
+from .types import (
+    Authority,
+    JsonValue,
+    LuaInvocationContext,
+    LuaRuntimeManagedRuntimeConfig,
+    ManagedRuntimeInstallDescriptor,
+    ManagedRuntimeKind,
+    RuntimeSkillRoot,
+    SkillInstallSourceType,
+    authority_value,
+    roots_to_json,
+)
 
 # Generic JSON object payload used by runtime-lease and system helpers.
 # 运行时租约与 system 辅助器使用的通用 JSON 对象载荷。
@@ -149,6 +160,64 @@ class LuaSkillsClient:
         """
 
         return LuaSkillsJsonFfi(library_path, runtime_root).call_json_no_input("luaskills_ffi_describe_json")
+
+    @staticmethod
+    def resolve_managed_runtime_install(
+        distribution_root: str | os.PathLike[str],
+        runtime: ManagedRuntimeKind,
+        version: str,
+        platform: str,
+        *,
+        library_path: str | os.PathLike[str] | None = None,
+        runtime_root: str | os.PathLike[str] | None = None,
+    ) -> ManagedRuntimeInstallDescriptor:
+        """
+        Resolve and validate one host-shared managed Python or Node.js installation without creating an engine.
+        不创建引擎，解析并校验一个由宿主共享的受管 Python 或 Node.js 安装。
+
+        Args:
+            distribution_root: Existing absolute root that directly contains the python and node families.
+            runtime: Exact managed interpreter family, either python or node.
+            version: Exact semantic runtime version required by the host.
+            platform: Exact normalized LuaSkills platform key.
+            library_path: Optional explicit LuaSkills native library path.
+            runtime_root: Optional SDK runtime root used only to locate the LuaSkills native library.
+        Returns:
+            The canonical installation paths and SHA-256 identities validated by LuaSkills.
+
+        参数：
+            distribution_root：直接包含 python 与 node 目录的现有绝对根。
+            runtime：精确受管解释器类型，只能是 python 或 node。
+            version：宿主要求的精确语义化运行时版本。
+            platform：精确规范化 LuaSkills 平台键。
+            library_path：可选的显式 LuaSkills 原生库路径。
+            runtime_root：仅用于定位 LuaSkills 原生库的可选 SDK 运行根。
+        返回：
+            LuaSkills 校验后的规范安装路径与 SHA-256 身份。
+        """
+
+        if runtime not in {"python", "node"}:
+            raise ValueError("runtime must be either 'python' or 'node'")
+        # DistributionPath preserves the host's explicit absolute-path contract.
+        # DistributionPath 保留宿主显式绝对路径契约。
+        distribution_path = Path(distribution_root)
+        if not distribution_path.is_absolute():
+            raise ValueError("distribution_root must be an absolute path")
+        # DistributionRoot is normalized once before crossing the native boundary.
+        # DistributionRoot 在跨越原生边界前统一规范化一次。
+        resolved_distribution_root = normalized_path(distribution_path.resolve())
+        # Descriptor comes from the authoritative Rust manifest and file-identity validator.
+        # Descriptor 来自权威 Rust 清单与文件身份校验器。
+        descriptor = LuaSkillsJsonFfi(library_path, runtime_root).call_json(
+            "luaskills_ffi_managed_runtime_resolve_json",
+            {
+                "distribution_root": resolved_distribution_root,
+                "runtime": runtime,
+                "version": version,
+                "platform": platform,
+            },
+        )
+        return cast(ManagedRuntimeInstallDescriptor, descriptor)
 
     def poll_managed_session_events(
         self,
@@ -1424,6 +1493,21 @@ def default_pool_config() -> dict[str, int]:
     return {"min_size": 1, "max_size": 4, "idle_ttl_secs": 60}
 
 
+def default_managed_runtime_config() -> LuaRuntimeManagedRuntimeConfig:
+    """
+    Return the stable managed Python/Node Worker and persistent-session defaults.
+    返回稳定的受管 Python/Node Worker 与持久会话默认值。
+    """
+
+    return {
+        "worker_pool_max_size_per_environment": 4,
+        "worker_idle_ttl_secs": 60,
+        "persistent_session_limit_per_engine": 256,
+        "persistent_session_default_buffer_limit_bytes_per_stream": 1024 * 1024,
+        "invoke_default_timeout_ms": None,
+    }
+
+
 def default_host_options(runtime_root: str | os.PathLike[str]) -> dict[str, Any]:
     """
     Return the SDK default host options for one runtime root.
@@ -1433,6 +1517,9 @@ def default_host_options(runtime_root: str | os.PathLike[str]) -> dict[str, Any]
     root = Path(runtime_root).expanduser().resolve()
     base_options = {
         "runtime_root": normalized_path(root),
+        "managed_runtime_distribution_root": None,
+        "managed_runtime_environment_root": None,
+        "managed_runtime_config": default_managed_runtime_config(),
         "temp_dir": None,
         "resources_dir": None,
         "lua_packages_dir": None,

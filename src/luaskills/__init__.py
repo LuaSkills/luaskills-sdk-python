@@ -14,6 +14,7 @@ from .client import (
     SystemSkillManagementClient,
     create_engine_options,
     default_host_options,
+    default_managed_runtime_config,
     default_pool_config,
     default_space_controller_options,
 )
@@ -53,8 +54,12 @@ from .runtime_assets import (
     runtime_manifest_path,
     write_runtime_install_manifest,
 )
-from .types import Authority, LuaInvocationContext, RuntimeSkillRoot, SkillInstallSourceType
 from .types import (
+    Authority,
+    LuaInvocationContext,
+    ManagedRuntimeInstallDescriptor,
+    ManagedRuntimeKind,
+    LuaRuntimeManagedRuntimeConfig,
     RuntimeChangeSetDiagnostic,
     RuntimeChangeSetFile,
     RuntimeChangeSetHostResult,
@@ -62,6 +67,8 @@ from .types import (
     RuntimeChangeSetLine,
     RuntimeChangeSetPayload,
     RuntimeHostResult,
+    RuntimeSkillRoot,
+    SkillInstallSourceType,
 )
 
 __all__ = [
@@ -75,6 +82,9 @@ __all__ = [
     "LuaSkillsError",
     "LuaSkillsJsonFfi",
     "ManagedSessionWakeCallback",
+    "ManagedRuntimeInstallDescriptor",
+    "ManagedRuntimeKind",
+    "LuaRuntimeManagedRuntimeConfig",
     "ModelEmbedJsonCallback",
     "ModelLlmJsonCallback",
     "RuntimeLeaseClient",
@@ -109,6 +119,7 @@ __all__ = [
     "SystemSkillManagementClient",
     "create_engine_options",
     "default_host_options",
+    "default_managed_runtime_config",
     "default_pool_config",
     "default_space_controller_options",
     "build_runtime_install_manifest",

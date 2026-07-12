@@ -11,6 +11,62 @@ from typing import Any, Literal, TypeAlias, TypedDict
 
 JsonValue: TypeAlias = Any
 
+# ManagedRuntimeKind identifies the host-selected managed interpreter family.
+# ManagedRuntimeKind 标识宿主选择的受管解释器类型。
+ManagedRuntimeKind: TypeAlias = Literal["python", "node"]
+
+
+class LuaRuntimeManagedRuntimeConfig(TypedDict):
+    """
+    Host-selected managed Python/Node Worker and persistent-session resource policy.
+    宿主选择的受管 Python/Node Worker 与持久会话资源策略。
+    """
+
+    # WorkerPoolMaxSizePerEnvironment is the maximum live Worker count for one exact pool key.
+    # WorkerPoolMaxSizePerEnvironment 是单个精确池键的最大活动 Worker 数量。
+    worker_pool_max_size_per_environment: int
+    # WorkerIdleTtlSecs is the idle lifetime before one unused Worker may be retired.
+    # WorkerIdleTtlSecs 是未使用 Worker 可被回收前的空闲秒数。
+    worker_idle_ttl_secs: int
+    # PersistentSessionLimitPerEngine bounds launching and live sessions owned by one engine.
+    # PersistentSessionLimitPerEngine 限制单个引擎拥有的启动中与活动会话数量。
+    persistent_session_limit_per_engine: int
+    # PersistentSessionDefaultBufferLimitBytesPerStream is the omitted session.open stream limit.
+    # PersistentSessionDefaultBufferLimitBytesPerStream 是 session.open 省略时的每流缓冲上限。
+    persistent_session_default_buffer_limit_bytes_per_stream: int
+    # InvokeDefaultTimeoutMs is the omitted invoke timeout; None means unlimited.
+    # InvokeDefaultTimeoutMs 是 invoke 省略时的超时；None 表示无限制。
+    invoke_default_timeout_ms: int | None
+
+
+class ManagedRuntimeInstallDescriptor(TypedDict):
+    """
+    Validated host-visible managed runtime installation returned by LuaSkills.
+    LuaSkills 返回的已校验宿主可见受管运行时安装。
+    """
+
+    # Runtime is the exact managed interpreter family.
+    # Runtime 是精确的受管解释器类型。
+    runtime: ManagedRuntimeKind
+    # Version is the exact semantic runtime version.
+    # Version 是精确的语义化运行时版本。
+    version: str
+    # Platform is the normalized LuaSkills platform key.
+    # Platform 是规范化的 LuaSkills 平台键。
+    platform: str
+    # InstallRoot is the canonical installation directory.
+    # InstallRoot 是规范安装目录。
+    install_root: str
+    # Executable is the canonical interpreter executable path.
+    # Executable 是规范解释器可执行文件路径。
+    executable: str
+    # ManifestHash is the SHA-256 digest of runtime-manifest.json.
+    # ManifestHash 是 runtime-manifest.json 的 SHA-256 摘要。
+    manifest_hash: str
+    # ExecutableHash is the SHA-256 digest of the interpreter executable.
+    # ExecutableHash 是解释器可执行文件的 SHA-256 摘要。
+    executable_hash: str
+
 
 class RuntimeChangeSetLine(TypedDict):
     """

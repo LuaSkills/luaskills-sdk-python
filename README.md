@@ -37,7 +37,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/deps/sync_runtime_as
 RUNTIME_ROOT=/opt/luaskills scripts/deps/sync_runtime_assets.sh all vldb-controller
 ```
 
-Supported targets are `all`, `luaskills`, `lua`, and `vldb`. VLDB presets are `none`, `vldb-controller`, `vldb-direct`, and `host-callback`. The scripts pin LuaSkills to `v0.5.0` by default and accept explicit release-version overrides.
+Supported targets are `all`, `luaskills`, `lua`, and `vldb`. VLDB presets are `none`, `vldb-controller`, `vldb-direct`, and `host-callback`. The scripts pin LuaSkills to `v0.5.1` by default and accept explicit release-version overrides.
 
 `install-runtime` downloads GitHub Release assets, verifies `.sha256` sidecars, extracts native files and Lua runtime packages, and writes:
 
@@ -62,16 +62,59 @@ Managed Python and Node.js child runtimes are optional. Use `--managed-runtimes 
 
 Managed child runtimes support Windows x64, Linux x64/ARM64, and macOS x64/ARM64. Windows ARM is explicitly rejected before any download or target-directory creation. Source distributions also include the standalone `scripts/deps/fetch_managed_runtimes.ps1`, `scripts/deps/fetch_managed_runtimes.sh`, and `scripts/debug-tools/managed_runtime_layout_check.py` tools used to prepare and validate debug runtime roots.
 
-The current exact managed dependency versions are Python `3.14.4`, uv `0.11.28`, Node.js `24.18.0`, and pnpm `11.11.0`. Package `dependencies.yaml` files must declare the same exact runtime and package-manager versions unless the host deliberately installs another supported version.
+The current exact managed dependency versions are Python `3.14.6`, uv `0.11.28`, Node.js `24.18.0`, and pnpm `11.11.0`. Package `dependencies.yaml` files must declare the same exact runtime and package-manager versions unless the host deliberately installs another supported version.
+
+### Host-selected managed runtime roots
+
+LuaSkills 0.5.1 separates the LuaSkills data root, the read-only interpreter distribution root, and the writable managed-environment root. Both explicit managed roots must be absolute; when omitted, LuaSkills keeps the compatible `runtime_root/dependencies/runtimes` and `runtime_root/dependencies/envs` layout.
+
+```python
+from luaskills import LuaSkillsClient
+
+distribution_root = "D:/VulcanCode/dependencies/runtimes"
+environment_root = "D:/VulcanCodeData/managed-runtime-envs"
+
+client = LuaSkillsClient(
+    runtime_root="D:/VulcanCodeData/luaskills",
+    host_options={
+        "managed_runtime_distribution_root": distribution_root,
+        "managed_runtime_environment_root": environment_root,
+        "managed_runtime_config": {
+            "worker_pool_max_size_per_environment": 8,
+            "worker_idle_ttl_secs": 120,
+            "persistent_session_limit_per_engine": 128,
+            "persistent_session_default_buffer_limit_bytes_per_stream": 2 * 1024 * 1024,
+            "invoke_default_timeout_ms": 30_000,
+        },
+    },
+)
+
+python_install = LuaSkillsClient.resolve_managed_runtime_install(
+    distribution_root,
+    "python",
+    "3.14.6",
+    "windows-x64",
+    runtime_root="D:/VulcanCodeData/luaskills",
+)
+```
+
+`default_managed_runtime_config()` returns the stable engine defaults: `4` Workers per exact environment/package-owner pool, `60` idle seconds, `256` persistent sessions, `1 MiB` per session output stream, and no default invoke timeout. Start from that complete object when changing individual values. Every configured number must be positive; per-call `invoke.timeout_ms` and per-session `session.open.buffer_limit_bytes` override only their matching engine defaults.
+
+The standalone fetch and debug tools accept the same split layout:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/deps/fetch_managed_runtimes.ps1 -RuntimeRoot D:\VulcanCodeData\luaskills -DistributionRoot D:\VulcanCode\dependencies\runtimes -Target all
+python scripts/debug-tools/managed_runtime_layout_check.py D:\VulcanCodeData\luaskills --distribution-root D:\VulcanCode\dependencies\runtimes --environment-root D:\VulcanCodeData\managed-runtime-envs
+```
 
 The SDK keeps LuaSkills core aligned with the SDK release and resolves runtime packages from the compatible `0.1` series by selecting the newest published patch automatically.
 
 ## Version Alignment
 
 - Keep the SDK and LuaSkills core on the same current release line whenever possible.
-- The current SDK defaults to LuaSkills core tag `v0.5.0`.
+- The current SDK defaults to LuaSkills core tag `v0.5.1`.
 - Runtime packages and native dependencies still come from the split `LuaSkills/luaskills-packages` and related release assets.
-- SDK default host options now pass only `runtime_root`; LuaSkills derives `bin`, `libs`, `lua_packages`, `resources`, `skills`, `temp`, `dependencies`, `state`, `databases`, `config`, and `system_lua_lib`.
+- SDK default host options pass `runtime_root`, null managed-root override slots, and the complete stable `managed_runtime_config`; LuaSkills derives the fixed data layout until the host explicitly overrides roots or policy.
 - Host tools live directly under `runtime_root/bin`, not `runtime_root/bin/tools`.
 
 ```powershell
@@ -348,7 +391,7 @@ finally:
 - Canonical `change_set` payloads now use file lifecycle records plus hunk-level `before + delete[] + insert[] + after` blocks for `modify` changes.
 - `create` and `delete` file records carry full-file `content`, while `rename` records carry `old_path` and `new_path`.
 - Public leases accept `cwd`, `workspace_root`, `lua_roots`, `c_roots`, and `mounts`. System leases require `system_package`, reject `lua_roots/c_roots`, and derive roots from the trusted package manifest.
-- `poll_managed_session_events()`, `wait_managed_session_events()`, and `set_managed_session_wake_callback()` expose the 0.5.0 event surface.
+- `poll_managed_session_events()`, `wait_managed_session_events()`, and `set_managed_session_wake_callback()` expose the 0.5.1 event surface.
 
 ## Authority And Management
 
