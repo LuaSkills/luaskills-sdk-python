@@ -91,8 +91,8 @@ class RecordingFfi:
 
 class ManagedRuntimeHostRootsTests(unittest.TestCase):
     """
-    Verify Python SDK parameters stay aligned with the 0.5.1 JSON FFI.
-    校验 Python SDK 参数与 0.5.1 JSON FFI 保持一致。
+    Verify Python SDK parameters stay aligned with the 0.5.2 JSON FFI.
+    校验 Python SDK 参数与 0.5.2 JSON FFI 保持一致。
     """
 
     def test_default_host_options_include_explicit_managed_roots(self) -> None:
