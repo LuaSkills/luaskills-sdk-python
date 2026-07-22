@@ -35,13 +35,13 @@ Default luaskills-packages release series used by SDK runtime installation.
 SDK 运行时安装使用的默认 luaskills-packages 发布协议线。
 """
 
-DEFAULT_VLDB_CONTROLLER_VERSION = "v0.2.1"
+DEFAULT_VLDB_CONTROLLER_VERSION = "v0.2.3"
 """
 Default vldb-controller release tag used by SDK runtime installation.
 SDK 运行时安装使用的默认 vldb-controller 发布标签。
 """
 
-DEFAULT_VLDB_SQLITE_VERSION = "v0.1.5"
+DEFAULT_VLDB_SQLITE_VERSION = "v0.1.6"
 """
 Default vldb-sqlite release tag used by SDK runtime installation.
 SDK 运行时安装使用的默认 vldb-sqlite 发布标签。
