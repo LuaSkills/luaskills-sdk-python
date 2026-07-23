@@ -6,7 +6,7 @@ LuaSkills 主仓库：[LuaSkills/luaskills](https://github.com/LuaSkills/luaskil
 
 Python SDK，用于通过公共 JSON FFI 接入 LuaSkills 运行时。
 
-`0.5.4` 是当前稳定补丁版本。它保持 `0.5.3` 宿主 API 不变，并把运行时资产默认值切换到 LuaSkills core `v0.5.4`、vldb-controller `v0.2.3` 与 vldb-sqlite `v0.1.6`。
+`0.5.5` 是当前发布版本。它采用严格的技能包级配置契约，并把运行时资产默认值切换到 LuaSkills core `v0.5.5`、vldb-controller `v0.2.3` 与 vldb-sqlite `v0.1.6`。
 
 SDK 封装了原生动态库加载、JSON FFI buffer、engine 生命周期、正式 skill root、带权限语义的管理调用、skill config、provider callback、宿主工具 callback 与 runtime 资产安装。宿主在常规集成中不需要手写底层 FFI buffer 或 JSON 包络。
 
@@ -39,7 +39,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/deps/sync_runtime_as
 RUNTIME_ROOT=/opt/luaskills scripts/deps/sync_runtime_assets.sh all vldb-controller
 ```
 
-目标支持 `all`、`luaskills`、`lua`、`vldb`；VLDB 模式支持 `none`、`vldb-controller`、`vldb-direct`、`host-callback`。脚本默认固定 LuaSkills `v0.5.4`，并允许显式覆盖发布版本。
+目标支持 `all`、`luaskills`、`lua`、`vldb`；VLDB 模式支持 `none`、`vldb-controller`、`vldb-direct`、`host-callback`。脚本默认固定 LuaSkills `v0.5.5`，并允许显式覆盖发布版本。
 
 `install-runtime` 会下载 GitHub Release 资产、校验 `.sha256` 旁路文件、解压原生文件与 Lua runtime 包，并写入：
 
@@ -114,7 +114,7 @@ python scripts/debug-tools/managed_runtime_layout_check.py D:\VulcanCodeData\lua
 ## 版本对齐
 
 - 尽量让 SDK 与 LuaSkills core 保持同一条当前发布版本线。
-- 当前 SDK 默认指向 LuaSkills core 标签 `v0.5.4`。
+- 当前 SDK 默认指向 LuaSkills core 标签 `v0.5.5`。
 - runtime packages 与 native deps 仍然来自拆分后的 `LuaSkills/luaskills-packages` 及相关发布资产。
 - SDK 默认 host options 传入 `runtime_root`、两个空的受管根覆盖槽与完整稳定的 `managed_runtime_config`；宿主未显式覆盖时，LuaSkills 会推导固定数据布局。
 - 宿主工具直接放在 `runtime_root/bin`，不再放到 `runtime_root/bin/tools`。
@@ -419,7 +419,43 @@ luaskills system-install LuaSkills/luaskills-demo-skill --target-root ROOT --aut
 
 ## Skill Config
 
-skill config 是普通的 `skill_id + key` 配置存储面。配置只有在 Lua skill 主动读取时才会影响行为；它不是运行时强制策略层。
+skill config 归属于有效技能包，而不是包内单个入口。宿主必须把 `host_options["skill_config_root"]` 设置为绝对用户级目录；普通技能包与 ROOT 所属技能包分别保存到 `skills/config.json` 和 `system-skills/config.json`。每条原始 `list()` 记录都包含 `store_scope`，因此两个文件中同名技能包的保留记录仍可明确区分。旧的无版本配置文档会被拒绝。
+
+```python
+schema = client.config.describe("my-skill")
+status = client.config.validate("my-skill")
+write = client.config.set("my-skill", {
+    "api_key": "value",
+    "retry_count": 3,
+})
+client.config.set(
+    "my-skill",
+    "retry_count",
+    4,
+    expected_revision=write["revision"],
+)
+events = client.config.poll_events(limit=100)
+```
+
+`describe()` 返回名称、类型、约束、UI 提示、技能包作者说明、枚举选项、默认值与无歧义值状态；`mode="installed"` 可在不执行 Lua 的情况下发现物理技能包。写入仅允许已声明 key，必须通过声明约束和技能包校验器，并按单个技能包批次原子提交。
+
+默认不返回配置值。`include_values=True` 返回未遮罩有效值；SDK 与 LuaSkills 不负责授权或遮罩，宿主必须对读取和修改执行允许、拒绝、强制覆盖或用户授权策略。Lua 代码只能修改自身技能包，宿主 SDK 调用则有意不加跨包限制。
+
+`expected_revision` 为写入与删除启用比较并交换。`poll_events`、`wait_for_events`、`watch_events` 提供有序的本地写入与外部重载事件。配置缺失时，应展示 `describe()` 结果，并要求用户或已授权 AI 工具提供声明中的参数。技能包卸载后配置仍会保留，显式清理由宿主负责。配置只有在 Lua skill 主动读取时才会影响行为；它不是运行时强制策略层。
+
+对应 CLI：
+
+```powershell
+luaskills config describe my-skill --skill-config-root D:\user-config
+luaskills config validate my-skill
+luaskills config describe --installed --root-name ROOT
+luaskills config set my-skill retry_count 3 --expected-revision 7
+luaskills config set-batch my-skill '{"retry_count":4,"mode":"safe"}'
+luaskills config refresh skills
+luaskills config events --after-sequence 12 --limit 100
+```
+
+CLI 默认把 `--skill-config-root` 设为 `<runtime-root>/config`；嵌入 SDK 的宿主仍必须自行选择并传入绝对用户级目录。
 
 ## 常见问题
 

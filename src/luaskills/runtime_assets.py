@@ -23,7 +23,7 @@ from typing import Any, Callable
 
 from .roots import normalized_path
 
-DEFAULT_LUASKILLS_VERSION = "v0.5.4"
+DEFAULT_LUASKILLS_VERSION = "v0.5.5"
 """
 Default LuaSkills release tag used by SDK runtime installation.
 SDK 运行时安装使用的默认 LuaSkills 发布标签。

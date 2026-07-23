@@ -9,11 +9,301 @@ from dataclasses import asdict, dataclass
 from enum import Enum
 from typing import Any, Literal, TypeAlias, TypedDict
 
+from .config_contract import (
+    SkillConfigStoreScope,
+    SkillPackageConfigFormat,
+    SkillPackageConfigItemState,
+    SkillPackageConfigType,
+)
+
 JsonValue: TypeAlias = Any
 
 # ManagedRuntimeKind identifies the host-selected managed interpreter family.
 # ManagedRuntimeKind 标识宿主选择的受管解释器类型。
 ManagedRuntimeKind: TypeAlias = Literal["python", "node"]
+
+
+
+# Typed scalar accepted by package configuration writes.
+# 技能包配置写入接受的类型化标量。
+SkillConfigValue: TypeAlias = str | int | float | bool
+
+class SkillPackageConfigConstraints(TypedDict, total=False):
+    """
+    Type-specific package configuration constraints.
+    类型专属技能包配置约束。
+    """
+
+    minimum: int | float
+    maximum: int | float
+    min_length: int
+    max_length: int
+
+
+class SkillPackageConfigEnumOption(TypedDict):
+    """
+    One declared package configuration enumeration option.
+    单个已声明技能包配置枚举选项。
+    """
+
+    value: str
+    label: str
+    description: str
+
+
+class _SkillPackageConfigDeclarationRequired(TypedDict):
+    """
+    Required package configuration declaration fields.
+    技能包配置声明必填字段。
+    """
+
+    key: str
+    type: SkillPackageConfigType
+    required: bool
+    sensitive: bool
+    description: str
+    constraints: SkillPackageConfigConstraints
+    options: list[SkillPackageConfigEnumOption]
+    advanced: bool
+    restart_required: bool
+    deprecated: bool
+
+
+class SkillPackageConfigDeclaration(_SkillPackageConfigDeclarationRequired, total=False):
+    """
+    Complete manifest-level package configuration declaration.
+    完整清单级技能包配置声明。
+    """
+
+    default: SkillConfigValue
+    title: str
+    group: str
+    order: int
+    placeholder: str
+    example: SkillConfigValue
+    format: SkillPackageConfigFormat
+    deprecation_message: str
+
+
+class SkillPackageConfigValidationError(TypedDict):
+    """
+    Structured value-safe item validation failure.
+    结构化且不泄漏值的配置项校验失败。
+    """
+
+    code: str
+    message: str
+
+
+class _SkillPackageConfigItemDescriptorRequired(_SkillPackageConfigDeclarationRequired):
+    """
+    Required runtime item descriptor fields.
+    运行时配置项描述必填字段。
+    """
+
+    state: SkillPackageConfigItemState
+    satisfied: bool
+
+
+class SkillPackageConfigItemDescriptor(
+    _SkillPackageConfigItemDescriptorRequired,
+    total=False,
+):
+    """
+    Runtime descriptor for one declared package configuration item.
+    单个已声明技能包配置项的运行时描述。
+    """
+
+    default: SkillConfigValue
+    title: str
+    group: str
+    order: int
+    placeholder: str
+    example: SkillConfigValue
+    format: SkillPackageConfigFormat
+    deprecation_message: str
+    validation_error: SkillPackageConfigValidationError
+    value: str
+
+
+class SkillPackageConfigIssue(TypedDict):
+    """
+    One key-owned static configuration issue.
+    单个配置键所属的静态配置问题。
+    """
+
+    key: str
+    code: str
+    message: str
+
+
+class SkillPackageConfigBusinessIssue(TypedDict, total=False):
+    """
+    One optional-key cross-field business issue.
+    单个可选键跨字段业务问题。
+    """
+
+    key: str
+    code: str
+    message: str
+
+
+class SkillPackageConfigStatus(TypedDict):
+    """
+    Completeness and validity status of one effective package.
+    单个有效技能包的完整性与合法性状态。
+    """
+
+    skill_id: str
+    complete: bool
+    revision: str
+    store_scope: SkillConfigStoreScope
+    missing: list[SkillPackageConfigIssue]
+    invalid: list[SkillPackageConfigIssue]
+    business_issues: list[SkillPackageConfigBusinessIssue]
+    orphaned: list[str]
+    orphaned_count: int
+
+
+class SkillPackageConfigDescriptor(TypedDict):
+    """
+    Effective package configuration descriptor.
+    有效技能包配置描述。
+    """
+
+    skill_id: str
+    skill_version: str
+    complete: bool
+    revision: str
+    store_scope: SkillConfigStoreScope
+    missing_count: int
+    invalid_count: int
+    business_issue_count: int
+    orphaned_count: int
+    orphaned: list[str]
+    items: list[SkillPackageConfigItemDescriptor]
+
+
+class SkillConfigEventError(TypedDict):
+    """
+    Structured watcher or reload failure.
+    结构化监听或重载失败。
+    """
+
+    code: str
+    message: str
+
+
+class InstalledSkillPackageConfigDescriptor(TypedDict, total=False):
+    """
+    Physical installed package declaration descriptor.
+    物理已安装技能包声明描述。
+    """
+
+    skill_id: str
+    root_name: str
+    absolute_path: str
+    enabled: bool
+    shadowed: bool
+    effective: bool
+    manifest_valid: bool
+    manifest_issue: SkillConfigEventError
+    skill_version: str
+    config: list[SkillPackageConfigDeclaration]
+
+
+class SkillConfigEntry(TypedDict):
+    """
+    One raw persisted package configuration record.
+    单条原始持久化技能包配置记录。
+    """
+
+    store_scope: SkillConfigStoreScope
+    skill_id: str
+    key: str
+    value: str
+
+
+class _SkillConfigGetResultRequired(TypedDict):
+    """
+    Required fields of one package configuration lookup result.
+    单个技能包配置查询结果的必填字段。
+    """
+
+    found: bool
+    skill_id: str
+    key: str
+
+
+class SkillConfigGetResult(_SkillConfigGetResultRequired, total=False):
+    """
+    One package configuration lookup result with an optional found value.
+    单个技能包配置查询结果，可选包含已找到的值。
+    """
+
+    value: str
+
+
+class SkillConfigWriteResult(TypedDict):
+    """
+    Result of one atomic package configuration write.
+    单次原子技能包配置写入结果。
+    """
+
+    revision: str
+    changed: bool
+    values: dict[str, str]
+    changed_keys: list[str]
+
+
+class SkillConfigDeleteResult(TypedDict):
+    """
+    Result of one compare-and-swap deletion.
+    单次比较并交换删除结果。
+    """
+
+    revision: str
+    deleted: bool
+    key: str
+
+
+class SkillConfigEvent(TypedDict, total=False):
+    """
+    One ordered package configuration event.
+    单个有序技能包配置事件。
+    """
+
+    sequence: str
+    type: Literal["skill_config_changed", "skill_config_reload_failed"]
+    store_scope: SkillConfigStoreScope
+    skill_id: str
+    revision: str
+    changed_keys: list[str]
+    source: Literal["local_write", "external_reload"]
+    restart_required_keys: list[str]
+    complete: bool
+    error: SkillConfigEventError
+
+
+class SkillConfigEventBatch(TypedDict):
+    """
+    Ordered package configuration event batch.
+    有序技能包配置事件批次。
+    """
+
+    events: list[SkillConfigEvent]
+    next_sequence: str
+
+
+class SkillConfigStoreRefresh(TypedDict):
+    """
+    Result of one explicit store refresh.
+    单次显式存储刷新结果。
+    """
+
+    store_scope: SkillConfigStoreScope
+    revision: str
+    changed: bool
 
 
 class LuaRuntimeManagedRuntimeConfig(TypedDict):

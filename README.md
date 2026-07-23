@@ -6,7 +6,7 @@ Main LuaSkills repository: [LuaSkills/luaskills](https://github.com/LuaSkills/lu
 
 Python SDK for integrating the LuaSkills runtime through the public JSON FFI surface.
 
-`0.5.4` is the stable patch line. It preserves the `0.5.3` host API and defaults runtime assets to LuaSkills core `v0.5.4`, vldb-controller `v0.2.3`, and vldb-sqlite `v0.1.6`.
+`0.5.5` is the current release line. It adopts the strict package-level skill configuration contract and defaults runtime assets to LuaSkills core `v0.5.5`, vldb-controller `v0.2.3`, and vldb-sqlite `v0.1.6`.
 
 The SDK wraps native library loading, JSON FFI buffers, engine lifecycle, formal skill roots, authority-aware management calls, skill config, provider callbacks, host-tool callbacks, and runtime asset installation. Hosts should not need to hand-write low-level FFI buffers or JSON envelopes for normal integration.
 
@@ -39,7 +39,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/deps/sync_runtime_as
 RUNTIME_ROOT=/opt/luaskills scripts/deps/sync_runtime_assets.sh all vldb-controller
 ```
 
-Supported targets are `all`, `luaskills`, `lua`, and `vldb`. VLDB presets are `none`, `vldb-controller`, `vldb-direct`, and `host-callback`. The scripts pin LuaSkills to `v0.5.4` by default and accept explicit release-version overrides.
+Supported targets are `all`, `luaskills`, `lua`, and `vldb`. VLDB presets are `none`, `vldb-controller`, `vldb-direct`, and `host-callback`. The scripts pin LuaSkills to `v0.5.5` by default and accept explicit release-version overrides.
 
 `install-runtime` downloads GitHub Release assets, verifies `.sha256` sidecars, extracts native files and Lua runtime packages, and writes:
 
@@ -114,7 +114,7 @@ The SDK keeps LuaSkills core aligned with the SDK release and resolves runtime p
 ## Version Alignment
 
 - Keep the SDK and LuaSkills core on the same current release line whenever possible.
-- The current SDK defaults to LuaSkills core tag `v0.5.4`.
+- The current SDK defaults to LuaSkills core tag `v0.5.5`.
 - Runtime packages and native dependencies still come from the split `LuaSkills/luaskills-packages` and related release assets.
 - SDK default host options pass `runtime_root`, null managed-root override slots, and the complete stable `managed_runtime_config`; LuaSkills derives the fixed data layout until the host explicitly overrides roots or policy.
 - Host tools live directly under `runtime_root/bin`, not `runtime_root/bin/tools`.
@@ -419,7 +419,57 @@ If a system command is wrapped for ordinary tools, bind `--authority delegated_t
 
 ## Skill Config
 
-Skill config is a plain `skill_id + key` storage surface. Configuration only affects behavior when the Lua skill reads it. It is not a hard runtime policy layer.
+Skill config is declared by each effective package. Discover the declaration before requesting or changing values:
+
+```python
+schema = client.config.describe("my-skill")
+status = client.config.validate("my-skill")
+
+write = client.config.set("my-skill", {
+    "api_key": "value",
+    "retry_count": 3,
+})
+client.config.set(
+    "my-skill",
+    "retry_count",
+    4,
+    expected_revision=write["revision"],
+)
+client.config.get("my-skill", "api_key")
+client.config.list("my-skill")
+client.config.delete(
+    "my-skill",
+    "api_key",
+    expected_revision=write["revision"],
+)
+client.config.refresh()
+events = client.config.poll_events(limit=100)
+```
+
+Set `host_options["skill_config_root"]` to an absolute user-level directory. LuaSkills stores ordinary and ROOT-owned package configuration separately under `skills/config.json` and `system-skills/config.json`. Every raw `list()` entry includes `store_scope`, so retained records with the same package id remain unambiguous across both files. The strict versioned documents use decimal-string revisions, cross-process companion locks, atomic replacement, cached snapshots, and file-watch reloads. Old unversioned documents are rejected.
+
+`describe()` returns names, types, constraints, UI hints, package-authored descriptions, enum options, defaults, and unambiguous value states. `mode="installed"` discovers physical packages without executing Lua. Writes are accepted only for declared keys, must satisfy declaration and package validator rules, and commit atomically as one package batch.
+
+Values are omitted by default. `include_values=True` returns unmasked effective values. The SDK and LuaSkills do not authorize or mask this data; the host must allow, deny, force, or obtain user approval for disclosure and mutations. Lua code can modify only its own package, while host SDK calls are intentionally unrestricted.
+
+`expected_revision` enables compare-and-swap writes and deletes. `poll_events`, `wait_for_events`, and `watch_events` expose ordered local-write and external-reload events. A missing configuration should be handled by showing `describe()` output and asking the user or an authorized AI tool for the declared parameters.
+
+CLI equivalents:
+
+```bash
+luaskills config describe my-skill --skill-config-root /absolute/user-config
+luaskills config validate my-skill
+luaskills config describe my-skill --include-values
+luaskills config describe --installed --root-name ROOT
+luaskills config set my-skill retry_count 3 --expected-revision 7
+luaskills config set-batch my-skill '{"retry_count":4,"mode":"safe"}'
+luaskills config refresh skills
+luaskills config events --after-sequence 12 --limit 100
+```
+
+The CLI defaults `--skill-config-root` to `<runtime-root>/config`; hosts embedding the SDK must still choose and pass their own absolute user-level root.
+
+Configuration survives package uninstall; explicit cleanup belongs to the host. Configuration only affects behavior when the Lua skill reads it and is not a hard runtime policy layer.
 
 ## Troubleshooting
 

@@ -6,11 +6,20 @@ LuaSkills 公共 JSON FFI 表面的高级 Python 客户端。
 from __future__ import annotations
 
 import os
+import math
 import threading
+import time
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, Literal, cast
 from urllib.parse import urlparse
 
+from .config_contract import (
+    SKILL_CONFIG_MAXIMUM_EVENT_POLL_LIMIT,
+    SKILL_CONFIG_MAXIMUM_SAFE_INTEGER,
+    SkillConfigStoreScope,
+    SkillPackageConfigDescribeMode,
+)
 from .ffi import LuaSkillsJsonFfi, ManagedSessionWakeCallback
 from .roots import RuntimeRoots, normalized_path
 from .runtime_assets import host_options_from_runtime_manifest, load_runtime_install_manifest
@@ -22,6 +31,17 @@ from .types import (
     ManagedRuntimeInstallDescriptor,
     ManagedRuntimeKind,
     RuntimeSkillRoot,
+    InstalledSkillPackageConfigDescriptor,
+    SkillConfigDeleteResult,
+    SkillConfigEntry,
+    SkillConfigEvent,
+    SkillConfigEventBatch,
+    SkillConfigGetResult,
+    SkillConfigStoreRefresh,
+    SkillConfigValue,
+    SkillConfigWriteResult,
+    SkillPackageConfigDescriptor,
+    SkillPackageConfigStatus,
     SkillInstallSourceType,
     authority_value,
     roots_to_json,
@@ -520,42 +540,313 @@ class SkillConfigClient:
 
         self.client = client
 
-    def list(self, skill_id: str | None = None) -> list[dict[str, Any]]:
+    def list(self, skill_id: str | None = None) -> list[SkillConfigEntry]:
         """
         List flattened config records, optionally limited to one skill id.
         列出扁平化配置记录，并可选限制到单个 skill id。
         """
 
-        return self.client._call("luaskills_ffi_skill_config_list_json", {"engine_id": self.client.engine_id, "skill_id": skill_id})
+        return cast(
+            list[SkillConfigEntry],
+            self.client._call(
+                "luaskills_ffi_skill_config_list_json",
+                {"engine_id": self.client.engine_id, "skill_id": skill_id},
+            ),
+        )
 
-    def get(self, skill_id: str, key: str) -> dict[str, Any]:
+    def describe(
+        self,
+        skill_id: str | None = None,
+        *,
+        include_values: bool = False,
+        mode: SkillPackageConfigDescribeMode = "effective",
+        root_name: str | None = None,
+    ) -> list[SkillPackageConfigDescriptor | InstalledSkillPackageConfigDescriptor]:
+        """
+        Discover declared package configuration with optional values.
+        发现已声明的技能包配置并可选返回值。
+
+        The host must authorize include_values because returned values are never masked.
+        宿主必须授权 include_values，因为返回值永不自动遮罩。
+
+        skill_id optionally limits discovery to one exact effective package.
+        skill_id 可选地将发现限制到单个精确有效技能包。
+        include_values explicitly requests unmasked effective values.
+        include_values 显式请求未脱敏有效值。
+        Returns one descriptor per matching effective package.
+        返回每个匹配有效技能包的描述符。
+        """
+
+        result = self.client._call(
+            "luaskills_ffi_skill_config_describe_json",
+            {
+                "engine_id": self.client.engine_id,
+                "skill_id": skill_id,
+                "include_values": include_values,
+                "mode": mode,
+                "root_name": root_name,
+            },
+        )
+        return cast(
+            list[SkillPackageConfigDescriptor | InstalledSkillPackageConfigDescriptor],
+            result,
+        )
+
+    def validate(self, skill_id: str) -> SkillPackageConfigStatus:
+        """
+        Validate completeness and persisted values for one effective skill package.
+        校验单个有效技能包的完整性与持久化值。
+
+        skill_id is the exact owning package identifier.
+        skill_id 是精确的所属技能包标识。
+        Returns one structured completeness and validity status.
+        返回一个结构化完整性与合法性状态。
+        """
+
+        result = self.client._call(
+            "luaskills_ffi_skill_config_validate_json",
+            {
+                "engine_id": self.client.engine_id,
+                "skill_id": skill_id,
+            },
+        )
+        return cast(SkillPackageConfigStatus, result)
+
+    def get(self, skill_id: str, key: str) -> SkillConfigGetResult:
         """
         Get one config value by skill id and key.
         按 skill id 与 key 获取单个配置值。
         """
 
-        return self.client._call("luaskills_ffi_skill_config_get_json", {"engine_id": self.client.engine_id, "skill_id": skill_id, "key": key})
+        return cast(
+            SkillConfigGetResult,
+            self.client._call(
+                "luaskills_ffi_skill_config_get_json",
+                {"engine_id": self.client.engine_id, "skill_id": skill_id, "key": key},
+            ),
+        )
 
-    def set(self, skill_id: str, key: str, value: str) -> dict[str, Any]:
+    def set(
+        self,
+        skill_id: str,
+        key_or_values: str | Mapping[str, SkillConfigValue],
+        value: SkillConfigValue | None = None,
+        *,
+        expected_revision: str | None = None,
+    ) -> SkillConfigWriteResult:
         """
-        Set one config value by skill id and key.
-        按 skill id 与 key 设置单个配置值。
+        Atomically set one typed value or one typed nonempty batch.
+        原子设置单个类型化值或一个类型化非空批次。
         """
 
-        return self.client._call("luaskills_ffi_skill_config_set_json", {
-            "engine_id": self.client.engine_id,
-            "skill_id": skill_id,
-            "key": key,
-            "value": value,
-        })
+        if isinstance(key_or_values, str):
+            if value is None:
+                raise TypeError("single-key configuration set requires a value")
+            values = {key_or_values: value}
+        else:
+            if value is not None:
+                raise TypeError("batch configuration set does not accept a separate value")
+            values = dict(key_or_values)
+        if not values:
+            raise ValueError("configuration batch must not be empty")
+        for key, config_value in values.items():
+            if not isinstance(key, str) or not key:
+                raise TypeError("configuration keys must be nonempty strings")
+            _validate_skill_config_value(key, config_value)
+        result = self.client._call(
+            "luaskills_ffi_skill_config_set_json",
+            {
+                "engine_id": self.client.engine_id,
+                "skill_id": skill_id,
+                "values": values,
+                "expected_revision": expected_revision,
+            },
+        )
+        return cast(SkillConfigWriteResult, result)
 
-    def delete(self, skill_id: str, key: str) -> dict[str, Any]:
+    def delete(
+        self,
+        skill_id: str,
+        key: str,
+        *,
+        expected_revision: str | None = None,
+    ) -> SkillConfigDeleteResult:
         """
         Delete one config value by skill id and key.
         按 skill id 与 key 删除单个配置值。
         """
 
-        return self.client._call("luaskills_ffi_skill_config_delete_json", {"engine_id": self.client.engine_id, "skill_id": skill_id, "key": key})
+        result = self.client._call(
+            "luaskills_ffi_skill_config_delete_json",
+            {
+                "engine_id": self.client.engine_id,
+                "skill_id": skill_id,
+                "key": key,
+                "expected_revision": expected_revision,
+            },
+        )
+        return cast(SkillConfigDeleteResult, result)
+
+    def refresh(
+        self,
+        store_scope: SkillConfigStoreScope | None = None,
+    ) -> list[SkillConfigStoreRefresh]:
+        """
+        Explicitly refresh one selected configuration store or both stores.
+        显式刷新一个选定配置存储或两个存储。
+        """
+
+        result = self.client._call(
+            "luaskills_ffi_skill_config_refresh_json",
+            {
+                "engine_id": self.client.engine_id,
+                "store_scope": store_scope,
+            },
+        )
+        return cast(list[SkillConfigStoreRefresh], result)
+
+    def poll_events(
+        self,
+        after_sequence: str | None = None,
+        *,
+        limit: int = 100,
+    ) -> SkillConfigEventBatch:
+        """
+        Poll ordered configuration events after one optional cursor.
+        在一个可选游标之后轮询有序配置事件。
+        """
+
+        if (
+            isinstance(limit, bool)
+            or not isinstance(limit, int)
+            or not 1 <= limit <= SKILL_CONFIG_MAXIMUM_EVENT_POLL_LIMIT
+        ):
+            raise ValueError(
+                "event poll limit must be an integer between "
+                f"1 and {SKILL_CONFIG_MAXIMUM_EVENT_POLL_LIMIT}"
+            )
+        result = self.client._call(
+            "luaskills_ffi_skill_config_events_poll_json",
+            {
+                "engine_id": self.client.engine_id,
+                "after_sequence": after_sequence,
+                "limit": limit,
+            },
+        )
+        return cast(SkillConfigEventBatch, result)
+
+    def wait_for_events(
+        self,
+        after_sequence: str | None = None,
+        *,
+        timeout: float = 30.0,
+        poll_interval: float = 0.05,
+        limit: int = 100,
+        stop_event: threading.Event | None = None,
+    ) -> SkillConfigEventBatch:
+        """
+        Wait until at least one event is available or the timeout expires.
+        等待至少一个事件可用或等待超时。
+        """
+
+        if not math.isfinite(timeout) or timeout < 0:
+            raise ValueError("timeout must be one nonnegative finite number")
+        if not math.isfinite(poll_interval) or not 0 < poll_interval <= 60:
+            raise ValueError("poll_interval must be within (0, 60]")
+        deadline = time.monotonic() + timeout
+        while True:
+            if stop_event is not None and stop_event.is_set():
+                return {"events": [], "next_sequence": after_sequence or "0"}
+            batch = self.poll_events(after_sequence, limit=limit)
+            remaining = deadline - time.monotonic()
+            if batch["events"] or remaining <= 0:
+                return batch
+            wait_seconds = min(poll_interval, remaining)
+            if stop_event is None:
+                time.sleep(wait_seconds)
+            elif stop_event.wait(wait_seconds):
+                return {"events": [], "next_sequence": batch["next_sequence"]}
+
+    def watch_events(
+        self,
+        handler: Callable[[SkillConfigEvent], None],
+        *,
+        after_sequence: str | None = None,
+        poll_interval: float = 0.05,
+        limit: int = 100,
+        on_error: Callable[[Exception], None] | None = None,
+    ) -> Callable[[], None]:
+        """
+        Start background callback delivery and return one idempotent stop function.
+        启动后台回调投递并返回一个幂等停止函数。
+        """
+
+        stop_event = threading.Event()
+
+        # Deliver events serially to preserve the engine-local order.
+        # 串行投递事件以保持引擎内顺序。
+        def worker() -> None:
+            """
+            Poll and deliver ordered events until stopped.
+            轮询并投递有序事件直至停止。
+            """
+
+            cursor = after_sequence
+            try:
+                while not stop_event.is_set():
+                    batch = self.wait_for_events(
+                        cursor,
+                        timeout=max(poll_interval, 0.001),
+                        poll_interval=poll_interval,
+                        limit=limit,
+                        stop_event=stop_event,
+                    )
+                    for event in batch["events"]:
+                        handler(event)
+                    cursor = batch["next_sequence"]
+            except Exception as error:
+                if not stop_event.is_set() and on_error is not None:
+                    on_error(error)
+
+        thread = threading.Thread(
+            target=worker,
+            name="luaskills-config-events",
+            daemon=True,
+        )
+        thread.start()
+
+        def stop() -> None:
+            """
+            Stop callback delivery and wait briefly for the worker.
+            停止回调投递并短暂等待工作线程。
+            """
+
+            stop_event.set()
+            if threading.current_thread() is not thread:
+                thread.join(timeout=max(1.0, poll_interval * 2))
+
+        return stop
+
+
+# Largest exactly representable integer shared with JavaScript and Lua.
+# 与 JavaScript 和 Lua 共享的最大精确可表示整数。
+def _validate_skill_config_value(key: str, value: SkillConfigValue) -> None:
+    """
+    Reject Python values that cannot cross the common scalar wire contract losslessly.
+    拒绝无法无损通过公共标量线协议的 Python 值。
+    """
+
+    if isinstance(value, bool) or isinstance(value, str):
+        return
+    if isinstance(value, int):
+        if abs(value) > SKILL_CONFIG_MAXIMUM_SAFE_INTEGER:
+            raise ValueError(f"configuration '{key}' integer exceeds the common safe range")
+        return
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError(f"configuration '{key}' requires one finite float")
+        return
+    raise TypeError(f"configuration '{key}' requires a string, integer, float, or boolean")
 
 
 class SkillManagementClient:
@@ -1531,7 +1822,9 @@ def default_host_options(runtime_root: str | os.PathLike[str]) -> dict[str, Any]
         "dependency_dir_name": "",
         "state_dir_name": "",
         "database_dir_name": "",
-        "skill_config_file_path": None,
+        "skill_config_root": None,
+        "skill_config_lock_timeout_ms": None,
+        "skill_config_watch_debounce_ms": None,
         "allow_network_download": True,
         "github_base_url": None,
         "github_api_base_url": None,

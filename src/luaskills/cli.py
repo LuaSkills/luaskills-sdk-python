@@ -40,7 +40,13 @@ def main(argv: list[str] | None = None) -> None:
 
     skill_roots = build_roots(args, runtime_root)
     RuntimeRoots.ensure_layout(runtime_root, skill_roots)
-    with LuaSkillsClient(library_path=args.lib, runtime_root=runtime_root, ensure_runtime_layout=False) as client:
+    skill_config_root = Path(args.skill_config_root or runtime_root / "config").expanduser().resolve()
+    with LuaSkillsClient(
+        library_path=args.lib,
+        runtime_root=runtime_root,
+        host_options={"skill_config_root": str(skill_config_root).replace("\\", "/")},
+        ensure_runtime_layout=False,
+    ) as client:
         if args.command != "load":
             client.load_from_roots(skill_roots)
         dispatch_engine_command(client, skill_roots, args)
@@ -55,6 +61,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="luaskills")
     parser.add_argument("--lib", help="LuaSkills dynamic library path")
     parser.add_argument("--runtime-root", default=str(Path.cwd() / "luaskills-runtime"))
+    parser.add_argument("--skill-config-root")
     parser.add_argument("--authority", default=Authority.DELEGATED_TOOL.value, choices=[Authority.SYSTEM.value, Authority.DELEGATED_TOOL.value])
     parser.add_argument("--root-only", action="store_true")
     parser.add_argument("--no-project", action="store_true")
@@ -108,8 +115,27 @@ def build_parser() -> argparse.ArgumentParser:
     run_lua_parser.add_argument("args_json", nargs="?", default="{}")
 
     config_parser = subparsers.add_parser("config")
-    config_parser.add_argument("action", choices=["list", "get", "set", "delete"])
+    config_parser.add_argument(
+        "action",
+        choices=[
+            "list",
+            "describe",
+            "validate",
+            "get",
+            "set",
+            "set-batch",
+            "delete",
+            "refresh",
+            "events",
+        ],
+    )
     config_parser.add_argument("values", nargs="*")
+    config_parser.add_argument("--include-values", action="store_true")
+    config_parser.add_argument("--installed", action="store_true")
+    config_parser.add_argument("--root-name")
+    config_parser.add_argument("--expected-revision")
+    config_parser.add_argument("--after-sequence")
+    config_parser.add_argument("--limit", type=int, default=100)
 
     for command in ["install", "update", "system-install", "system-update"]:
         subparser = subparsers.add_parser(command)
@@ -137,6 +163,7 @@ def normalize_global_args(raw_args: list[str]) -> list[str]:
     value_options = {
         "--lib",
         "--runtime-root",
+        "--skill-config-root",
         "--authority",
         "--root-skills",
         "--project-skills",
@@ -267,15 +294,61 @@ def dispatch_config_command(client: LuaSkillsClient, args: argparse.Namespace) -
     if args.action == "list":
         require_config_value_count(args.action, values)
         print_json(client.config.list(values[0] if values else None))
+    elif args.action == "describe":
+        require_config_value_count(args.action, values)
+        print_json(
+            client.config.describe(
+                values[0] if values else None,
+                include_values=args.include_values,
+                mode="installed" if args.installed else "effective",
+                root_name=args.root_name,
+            )
+        )
+    elif args.action == "validate":
+        require_config_value_count(args.action, values)
+        print_json(client.config.validate(values[0]))
     elif args.action == "get":
         require_config_value_count(args.action, values)
         print_json(client.config.get(values[0], values[1]))
     elif args.action == "set":
         require_config_value_count(args.action, values)
-        print_json(client.config.set(values[0], values[1], values[2]))
+        print_json(
+            client.config.set(
+                values[0],
+                values[1],
+                parse_skill_config_value(values[2]),
+                expected_revision=args.expected_revision,
+            )
+        )
+    elif args.action == "set-batch":
+        require_config_value_count(args.action, values)
+        print_json(
+            client.config.set(
+                values[0],
+                parse_skill_config_values(values[1]),
+                expected_revision=args.expected_revision,
+            )
+        )
     elif args.action == "delete":
         require_config_value_count(args.action, values)
-        print_json(client.config.delete(values[0], values[1]))
+        print_json(
+            client.config.delete(
+                values[0],
+                values[1],
+                expected_revision=args.expected_revision,
+            )
+        )
+    elif args.action == "refresh":
+        require_config_value_count(args.action, values)
+        print_json(client.config.refresh(values[0] if values else None))
+    elif args.action == "events":
+        require_config_value_count(args.action, values)
+        print_json(
+            client.config.poll_events(
+                args.after_sequence,
+                limit=args.limit,
+            )
+        )
 
 
 def require_config_value_count(action: str, values: list[str]) -> None:
@@ -286,14 +359,68 @@ def require_config_value_count(action: str, values: list[str]) -> None:
 
     expected_ranges = {
         "list": (0, 1, "config list [skill-id]"),
+        "describe": (
+            0,
+            1,
+            "config describe [skill-id] [--include-values] [--installed] [--root-name ROOT]",
+        ),
+        "validate": (1, 1, "config validate <skill-id>"),
         "get": (2, 2, "config get <skill-id> <key>"),
-        "set": (3, 3, "config set <skill-id> <key> <value>"),
+        "set": (3, 3, "config set <skill-id> <key> <value-json>"),
+        "set-batch": (2, 2, "config set-batch <skill-id> <values-json>"),
         "delete": (2, 2, "config delete <skill-id> <key>"),
+        "refresh": (0, 1, "config refresh [skills|system-skills]"),
+        "events": (0, 0, "config events [--after-sequence sequence] [--limit count]"),
     }
     minimum, maximum, usage = expected_ranges[action]
     if minimum <= len(values) <= maximum:
         return
     raise ValueError(usage)
+
+
+def parse_skill_config_value(text: str) -> str | int | float | bool:
+    """
+    Parse one configuration scalar from JSON text.
+    从 JSON 文本解析单个配置标量。
+
+    Args:
+        text: JSON scalar text.
+        text：JSON 标量文本。
+    Returns:
+        One supported configuration scalar.
+        一个受支持的配置标量。
+    """
+
+    value = json.loads(text)
+    if isinstance(value, (str, int, float, bool)) and value is not None:
+        return value
+    raise TypeError("configuration value JSON must be a string, number, or boolean")
+
+
+def parse_skill_config_values(text: str) -> dict[str, str | int | float | bool]:
+    """
+    Parse one nonempty configuration batch from JSON text.
+    从 JSON 文本解析一个非空配置批次。
+
+    Args:
+        text: JSON object text.
+        text：JSON 对象文本。
+    Returns:
+        One typed configuration batch.
+        一个类型化配置批次。
+    """
+
+    value = json.loads(text)
+    if not isinstance(value, dict) or not value:
+        raise TypeError("configuration batch JSON must be one nonempty object")
+    values: dict[str, str | int | float | bool] = {}
+    for key, item in value.items():
+        if not isinstance(key, str) or not key:
+            raise TypeError("configuration keys must be nonempty strings")
+        if not isinstance(item, (str, int, float, bool)) or item is None:
+            raise TypeError(f"configuration '{key}' must be a string, number, or boolean")
+        values[key] = item
+    return values
 
 
 def build_roots(args: argparse.Namespace, runtime_root: Path) -> list[RuntimeSkillRoot]:
