@@ -281,7 +281,6 @@ class EmbeddedTransport:
             finally:
                 self._end()
 
-
     @staticmethod
     def _decode(text: str) -> Any:
         """
@@ -342,4 +341,3 @@ class EmbeddedTransport:
                 raise RuntimeError("embedded transport still owns active calls or results")
             self._check("luaskills_ffi_embedded_transport_free_v1", self._free(self._transport_id))
             self._transport_id = None
-
