@@ -383,6 +383,18 @@ finally:
     client.close()
 ```
 
+## 嵌入式运行时传输（开发中）
+
+`EmbeddedTransport` 绑定五个版本一嵌入式 C 入口。此开发接口要求使用导出这些符号的匹配本地核心构建；已有 0.5.7 发布资产不提供该接口。版本提升和已发布资产对齐在发布冻结阶段完成。
+
+显式提供 `EmbeddedTransportConfig`，并使用既有 `library_path` 或 `runtime_root` 选择方式。`request(command)` 接收根命令并返回成功的 `result`，其中显式 JSON 空值返回 `None`。原生返回码通过带 `status` 的 `EmbeddedTransportError` 报告；已交付核心失败通过带 `code`、`message` 的 `EmbeddedRuntimeError` 报告。绑定保留身份全部 64 位；解码失败或 Python 在原生返回时抛出中断，仍会释放已返回结果。
+
+请求可以并发执行。`close()` 永久请求关闭，同时保留核心查询及宿主确认访问。通过核心生命周期命令排空并移除每个运行时后，再调用 `free()`。原生释放失败后，传输仍可用于排空；析构器不会静默释放活动运行时或卸载动态库。结果释放显式失败时，精确描述符保持拥有状态，活动调用返回后可通过 `release_results()` 重试释放。
+
+当前接入的是底层传输。类型化运行时辅助接口、自动回调事件泵及 `asyncio` 集成仍在实施中。这些辅助接口完成前，宿主须主动取得队列请求并确认真实处理完成，取消后也不例外。阻塞等待不能占满全部传输入场容量，也不能阻塞唯一负责回调的线程。
+
+原生集成验证位于 `tests/test_embedded_native_e2e.py`。设置 `PYTHONPATH=src`，并以 `LUASKILLS_LIB` 选择匹配开发动态库后，运行 `rtk proxy python -m unittest discover -s tests -p test_embedded_native_e2e.py -v`。测试覆盖实际 Lua 状态、结构化值、取消、并发控制及迟到提交回调结果。
+
 ## 迁移说明
 
 - 现有 `client.system(authority)` 生命周期调用保持兼容；返回的 wrapper 现在额外暴露查询辅助方法和 `runtime_leases()`。

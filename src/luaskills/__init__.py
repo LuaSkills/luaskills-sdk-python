@@ -32,6 +32,12 @@ from .config_contract import (
     SkillConfigStoreScope,
     SkillPackageConfigDescribeMode,
 )
+from .embedded_transport import (
+    EmbeddedRuntimeError,
+    EmbeddedTransport,
+    EmbeddedTransportConfig,
+    EmbeddedTransportError,
+)
 from .ffi import (
     HostToolJsonAction,
     HostToolJsonCallback,
@@ -109,6 +115,10 @@ from .types import (
 
 __all__ = [
     "Authority",
+    "EmbeddedRuntimeError",
+    "EmbeddedTransport",
+    "EmbeddedTransportConfig",
+    "EmbeddedTransportError",
     "HostToolJsonAction",
     "HostToolJsonCallback",
     "HostToolJsonRequest",

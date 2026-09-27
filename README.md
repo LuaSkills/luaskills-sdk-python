@@ -383,6 +383,18 @@ finally:
     client.close()
 ```
 
+## Embedded Runtime Transport (Development)
+
+`EmbeddedTransport` binds the five version-one embedded C entrypoints. This development API requires a matching locally built core exporting those symbols; the existing 0.5.7 release assets do not provide it. The version bump and published asset alignment are handled at release freeze.
+
+Pass an explicit `EmbeddedTransportConfig` and the existing `library_path` or `runtime_root` selection. `request(command)` accepts a root command and returns its successful `result`, including `None` for explicit JSON null. Native return codes raise `EmbeddedTransportError` with `status`; delivered core failures raise `EmbeddedRuntimeError` with `code` and `message`. The binding preserves all 64 identity bits and releases each native result even when decoding fails or Python raises an interruption at native return.
+
+Requests may run concurrently. `close()` permanently requests closure while keeping core queries and host acknowledgements available. Drain and remove every runtime with the core lifecycle commands, then call `free()`. Failed native free leaves the transport available for drainage; no destructor silently frees live runtimes or unloads the library. If result release explicitly fails, the exact descriptor remains owned and `release_results()` can retry after active calls have returned.
+
+The current binding exposes the low-level transport. Typed runtime helpers, automatic callback pumping and `asyncio` integration are still under implementation. Until those helpers land, the host must pump queued requests and acknowledge actual handler completion, including after cancellation. Blocking waits must not consume all transport admission or block the only thread responsible for callbacks.
+
+Native integration coverage is in `tests/test_embedded_native_e2e.py`. With `PYTHONPATH=src` and `LUASKILLS_LIB` selecting the matching development library, run `rtk proxy python -m unittest discover -s tests -p test_embedded_native_e2e.py -v`. These tests exercise actual Lua state, structured values, cancellation, concurrent control and late committed callback results.
+
 ## Migration Notes
 
 - Existing `client.system(authority)` lifecycle calls keep working; the returned wrapper now also exposes query helpers and `runtime_leases()`.
