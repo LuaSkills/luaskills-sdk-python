@@ -221,6 +221,8 @@ class EmbeddedTransportTests(unittest.TestCase):
             self.transport.request({"type":"describe"})
         self.assertEqual(business_error.exception.code, "busy")
         self.assertEqual(business_error.exception.message, "still draining")
+        self.assertEqual(str(business_error.exception), "busy: still draining")
+        self.assertEqual(business_error.exception.args, ("busy: still draining",))
         self.assertEqual(len(self.native.released), 1)
 
     def test_release_failure_retains_descriptor_and_blocks_free(self):

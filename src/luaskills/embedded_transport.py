@@ -50,8 +50,8 @@ class EmbeddedRuntimeError(RuntimeError):
 
     def __init__(self, code: str, message: str) -> None:
         """
-        Store the core's exact code and English diagnostic without inferring operation effects.
-        保存核心精确错误码及英文诊断，不推断操作副作用。
+        Store code and message as exact core diagnostics; return an exception with a stable readable form.
+        将 code 与 message 保存为精确核心诊断；返回具有稳定可读形式的异常。
         """
         # Exact structured core error code.
         # 精确结构化核心错误码。
@@ -59,6 +59,7 @@ class EmbeddedRuntimeError(RuntimeError):
         # Exact diagnostic supplied by the native core.
         # 原生核心提供的精确诊断。
         self.message = message
+        super().__init__(f"{code}: {message}")
 
 
 class EmbeddedResultReleaseError(EmbeddedTransportError):
@@ -93,15 +94,14 @@ class EmbeddedResultReleaseError(EmbeddedTransportError):
 
     def delivered_result(self) -> Any:
         """
-        Decode the copied response with the transport's normal envelope and business-error rules.
-        使用传输的正常信封及业务错误规则解码已复制响应。
-        Return the original successful result, or raise its business/parse error without issuing native work.
-        返回原始成功结果，或抛出其业务／解析错误，不发起原生工作。
+        Decode copied bytes using normal envelope rules; return the original result without issuing native work.
+        使用正常信封规则解码复制字节；返回原始结果，不发起原生工作。
+        Raise the original business or parse error, or report absent evidence explicitly.
+        抛出原始业务或解析错误，或明确报告证据缺失。
         """
         if self._response_bytes is None:
             raise RuntimeError("no copied embedded response is available")
         return EmbeddedTransport._decode(self._response_bytes.decode("utf-8"))
-        super().__init__(f"{code}: {message}")
 
 
 @dataclass(frozen=True, kw_only=True)

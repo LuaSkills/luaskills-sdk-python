@@ -43,6 +43,16 @@ from .embedded_callbacks import EffectState, HostCallbackContext, HostCapability
 from .embedded_pump import CallbackPumpConfig, EmbeddedCallbackPump
 from .embedded_contract import EmbeddedNativeStatus
 from .embedded_driver import EmbeddedCommand, EmbeddedCommandDriver, EmbeddedDriverConfig
+from .embedded_client import (
+    EmbeddedClient,
+    EmbeddedOperation,
+    EmbeddedPending,
+    EmbeddedPlugin,
+    EmbeddedPool,
+    EmbeddedRuntime,
+    EmbeddedSession,
+    EmbeddedSessionOpen,
+)
 from .ffi import (
     HostToolJsonAction,
     HostToolJsonCallback,
@@ -119,6 +129,14 @@ from .types import (
 )
 
 __all__ = [
+    "EmbeddedClient",
+    "EmbeddedOperation",
+    "EmbeddedPending",
+    "EmbeddedPlugin",
+    "EmbeddedPool",
+    "EmbeddedRuntime",
+    "EmbeddedSession",
+    "EmbeddedSessionOpen",
     "EmbeddedCommand",
     "EmbeddedCommandDriver",
     "EmbeddedDriverConfig",

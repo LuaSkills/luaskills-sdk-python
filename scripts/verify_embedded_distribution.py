@@ -18,6 +18,12 @@ import zipfile
 # 仓库输入与可分发字节比较，不创建第二套版本或摘要权威。
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE_ARTIFACTS = (
+    "luaskills/__init__.py",
+    "luaskills/embedded_client.py",
+    "luaskills/embedded_driver.py",
+    "luaskills/embedded_transport.py",
+    "luaskills/embedded_pump.py",
+    "luaskills/embedded_callbacks.py",
     "luaskills/embedded_contract.py",
     "luaskills/contracts/embedded/v1/contract.json",
     "luaskills/contracts/embedded/v1/contract.sha256",
@@ -52,7 +58,20 @@ import sys
 import typing
 sys.path.insert(0, sys.argv[1])
 from luaskills import embedded_contract as contract
+from luaskills import embedded_client as client
+import luaskills
 assert contract.__file__.startswith(sys.argv[1])
+assert client.__file__.startswith(sys.argv[1])
+# Resolve imported recursive aliases in their defining contract namespace, as required by typing on Python 3.10.
+# 按 Python 3.10 typing 的要求，在定义契约命名空间解析导入的递归别名。
+for name in ("EmbeddedClient", "EmbeddedPending", "EmbeddedRuntime", "EmbeddedPlugin",
+             "EmbeddedPool", "EmbeddedSession", "EmbeddedSessionOpen", "EmbeddedOperation"):
+    declaration = getattr(client, name)
+    assert getattr(luaskills, name) is declaration
+    typing.get_type_hints(declaration)
+    for method in vars(declaration).values():
+        if callable(method) and hasattr(method, "__annotations__"):
+            typing.get_type_hints(method, localns=vars(contract))
 # Resources must resolve inside the selected wheel, independently of repository paths.
 # 资源必须在选定 wheel 内解析，独立于仓库路径。
 resource = importlib.resources.files("luaskills").joinpath("contracts", "embedded", "v1")

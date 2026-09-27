@@ -399,9 +399,21 @@ finally:
 
 一个传输同时由一个驱动器拥有，工作与短控制具有独立执行器及回执配额，运行时构造无法占用 SDK 控制工作线程或其回执配额。所有权入场还为每个驱动器工作线程及回调泵控制工作线程预留相应原生结果槽和最坏 `max_response_bytes`。传输数量或聚合字节容量不足时，在发布所有者前拒绝；构造后不可重新赋值传输预算。直接底层请求及释放失败后保留的缓冲额外消耗原生容量，宿主仍须将其纳入容量／恢复策略。
 
-驱动器 `request_close()` 封闭新命令并启动拥有型关闭；`close(timeout=...)` 和 `close_async()` 观察实际执行器汇合。超时或取消关闭观察仍保留该关闭过程。关闭驱动器不会关闭核心运行时或回调泵。取消／排空核心期间保持驱动器与泵可用，处理待完成回执，释放已关闭运行时，再关闭驱动器并释放传输。驱动器拒绝阻塞 `operation_wait`，应通过短 `operation_status` 查询保持原生工作线程可用。在实现受控依赖追踪前，宿主回调中的嵌套驱动器调用明确不受支持。类型化运行时／操作／会话便利层仍在实施中。
+驱动器 `request_close()` 封闭新命令并启动拥有型关闭；`close(timeout=...)` 和 `close_async()` 观察实际执行器汇合。超时或取消关闭观察仍保留该关闭过程。关闭驱动器不会关闭核心运行时或回调泵。取消／排空核心期间保持驱动器与泵可用，处理待完成回执，释放已关闭运行时，再关闭驱动器并释放传输。驱动器拒绝阻塞 `operation_wait`，应通过短 `operation_status` 查询保持原生工作线程可用。在实现受控依赖追踪前，宿主回调中的嵌套驱动器调用明确不受支持。
 
-`EmbeddedCallbackPump(transport, runtime_id, config)` 为已初始化运行时拥有队列 Python 回调。显式提供正数边界 `CallbackPumpConfig(max_concurrent_handlers=..., max_pending_commands=..., poll_interval_ms=...)`。一个传输上的同一运行时只能有一个事件泵；其队列能力须全部通过该泵注册，不得另行消费同一个核心请求队列。类型化运行时构造和调用辅助接口仍在实施中。
+`EmbeddedClient(driver)` 使用生成输入输出类型，提供运行时、插件、池、会话及操作句柄。原生命令立即返回 `EmbeddedPending[T]`，通过 `result(timeout=...)` 或 `await result_async()` 观察；即使先前观察者被取消，两者仍观察同一命令。`pending.receipt` 暴露精确驱动器回执。处理交付后显式调用 `pending.forget()` 归还 SDK 配额。结果释放失败后可用 `pending.delivered_result()` 投影已复制成功响应，不重新提交；原生缓冲恢复仍须执行 `transport.release_results()`。
+
+运行时反射注解使用 `typing.get_type_hints(method, localns=vars(luaskills.embedded_contract))`：导入的递归别名在支持的 Python 版本下需要其定义命名空间。静态类型检查直接使用生成声明；分发验证器同时检查实际 wheel 中的声明及上述显式解析的方法注解。
+
+先用 `client.reserve()` 取得运行时句柄，再调用其单次 `initialize(engine_options, runtime_config)`。初始化观察中断后保留该身份并查询 `status()`，不重新构造。`client.runtime(id)` 及运行时的 `plugin(id)`、`pool(id)`、`session(id)`、`operation(id)` 仅绑定已知身份，不探测、不声称就绪；后续原生命令校验存在性及归属。
+
+`runtime.register_plugin(...)`、`register_pool(...)` 返回已确认句柄。`pool.submit(export, arguments, context, timeout_ms)` 和 `session.submit(...)` 返回操作句柄，其中 `timeout_ms` 是核心执行截止预算。`pool.open_session(timeout_ms)` 返回 `EmbeddedSessionOpen`，同时包含 `session` 和独立 `initialization` 操作；必须观察初始化操作，不能仅凭会话回执认定初始化成功。
+
+`operation.wait(timeout=..., poll_interval=...)` 和 `await operation.wait_async(poll_interval=...)` 通过短状态命令轮询，返回包含失败及副作用证据的完整终态快照。同步超时及 `asyncio.wait_for` 仅影响观察。显式 `operation.cancel()` 请求协作取消，返回布尔值不代表完成。轮询自动消费成功的只读 SDK 回执，中断或失败的回执保留在 `driver.commands` 供恢复。`operation.forget()` 删除终态**核心记录**，其返回的待完成命令回执也须处理并遗忘。
+
+运行时、插件、池和会话的 `request_close()` 返回关闭确认；执行 `free()` 或 `forget()` 前应核对实际原生状态。类型句柄借用驱动器，尚不拥有回调泵，也未提供上下文管理器；拥有型生命周期入口完成前继续显式按顺序关闭。设置 `LUASKILLS_LIB` 与 `PYTHONPATH=src` 后，用 `-p test_embedded_client.py` 验证真实公共／专用池、固定会话状态、生命周期屏障及迟到提交回调。
+
+`EmbeddedCallbackPump(transport, runtime_id, config)` 为已初始化运行时拥有队列 Python 回调。显式提供正数边界 `CallbackPumpConfig(max_concurrent_handlers=..., max_pending_commands=..., poll_interval_ms=...)`。一个传输上的同一运行时只能有一个事件泵；其队列能力须全部通过该泵注册，不得另行消费同一个核心请求队列。
 
 | 接口 | 契约 |
 | --- | --- |

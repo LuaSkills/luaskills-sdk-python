@@ -27,12 +27,12 @@ jobs:
         run: python -m pip install build==1.5.0 mypy==2.3.1
       - name: Verify exact offline generation
         run: python scripts/generate_embedded_contract.py --check
-      - name: Check generated public types against minimum Python
-        run: python -m mypy --strict --follow-imports=skip --python-version 3.10 src/luaskills/embedded_contract.py
-      - name: Exercise offline contract behavior
+      - name: Check generated and typed embedded APIs against minimum Python
+        run: python -m mypy --strict --follow-imports=skip --python-version 3.10 src/luaskills/embedded_contract.py src/luaskills/embedded_driver.py src/luaskills/embedded_client.py
+      - name: Exercise offline embedded behavior (native suites require the separate library matrix)
         env:
           PYTHONPATH: src
-        run: python -m unittest discover -s tests -p test_embedded_contract.py -v
+        run: python -m unittest discover -s tests -p 'test_embedded_*.py' -v
       - name: Build wheel from the source distribution
         run: python -m build --outdir dist
       - name: Verify both exact build artifacts
