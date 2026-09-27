@@ -391,9 +391,25 @@ finally:
 
 请求可以并发执行。`close()` 永久请求关闭，同时保留核心查询及宿主确认访问。通过核心生命周期命令排空并移除每个运行时后，再调用 `free()`。原生释放失败后，传输仍可用于排空；析构器不会静默释放活动运行时或卸载动态库。结果释放显式失败时，精确描述符保持拥有状态，活动调用返回后可通过 `release_results()` 重试释放。
 
-当前接入的是底层传输。类型化运行时辅助接口、自动回调事件泵及 `asyncio` 集成仍在实施中。这些辅助接口完成前，宿主须主动取得队列请求并确认真实处理完成，取消后也不例外。阻塞等待不能占满全部传输入场容量，也不能阻塞唯一负责回调的线程。
+`EmbeddedCallbackPump(transport, runtime_id, config)` 为已初始化运行时拥有队列 Python 回调。显式提供正数边界 `CallbackPumpConfig(max_concurrent_handlers=..., max_pending_commands=..., poll_interval_ms=...)`。一个传输上的同一运行时只能有一个事件泵；其队列能力须全部通过该泵注册，不得另行消费同一个核心请求队列。类型化运行时构造和调用辅助接口仍在实施中。
+
+| 接口 | 契约 |
+| --- | --- |
+| `HostCapability(descriptor, handler, mode)` | 使用精确队列核心描述符；`mode` 显式选择 `sync` 或 `async`。事件泵复制描述符并保留实际处理器。 |
+| `register(...)` / `register_async(...)` | 原子发布一个批次并返回不可变注册身份。同名替换不会重定向既有请求。 |
+| `unregister(id, timeout=...)` / `unregister_async(id)` | 停止新分发并等待实际处理器排空。仅注销不会取消已分发处理器。 |
+| `request_close()` / `close(timeout=...)` / `close_async()` | 退役全部处理器；实际关闭等待回调、确认及拥有线程。超时或观察者取消仍保留所有权。 |
+| `status` / `retry_acknowledgements(timeout=...)` | 暴露保留身份及确认失败。显式交付重试绝不重跑业务处理器；成功回执丢失时必须核对精确核心完成证据。 |
+
+处理器接收 `(arguments, context)`，返回普通 JSON 值，包含 `None`。`context.caller`、`request_id`、`registration_id` 独立于应用参数携带可信核心身份。取消是协作式的：使用 `raise_if_cancelled()`、`wait_cancelled(timeout)` 或 `await wait_cancelled_async()`；需要取消执行时显式取消原操作。`remaining_ms` 仅供参考。变更处理器通过 `context.report_effects(...)` 报告真实副作用，默认值为 `unknown`；成功或取消均不隐含提交／回滚。异常、非法 JSON 及超大结果仍保留最近的副作用报告。
+
+同步处理器在有界工作线程运行。异步处理器在事件泵的独立循环运行，必须使用为该循环创建的资源；不得阻塞该循环、在自身副作用完成前返回，或在回调内等待同一个泵排空。取消调用方 asyncio 任务或关闭其循环，不会取消拥有型处理器及注销任务。运行时取消后，保持事件泵存活直至实际处理器完成，关闭事件泵后再释放原生运行时和传输。确认恢复无法建立精确完成证据时，应保留原操作记录并解决已报告错误，不得遗忘该证据或卸载动态库。
+
+底层传输仍允许并发调用。阻塞原生等待不能占满全部传输入场名额；必须为回调泵和控制操作保留容量。事件泵自身仅使用短控制请求，不发出 `operation_wait`。
 
 原生集成验证位于 `tests/test_embedded_native_e2e.py`。设置 `PYTHONPATH=src`，并以 `LUASKILLS_LIB` 选择匹配开发动态库后，运行 `rtk proxy python -m unittest discover -s tests -p test_embedded_native_e2e.py -v`。测试覆盖实际 Lua 状态、结构化值、取消、并发控制及迟到提交回调结果。
+
+将同一命令的测试模式改为 `-p test_embedded_pump.py`，可验证实际同步／异步回调寿命、有界入场、调用方循环取消、迟到副作用及确认丢失恢复。保持上述环境变量，使用 `rtk proxy python -m unittest discover -s tests -v` 运行 SDK 完整回归。
 
 ## 迁移说明
 

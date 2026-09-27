@@ -168,6 +168,9 @@ class EmbeddedTransport:
         # Exact native results retained until their matching free succeeds, including explicit release errors.
         # 保留到匹配释放成功的精确原生结果，包含显式释放错误。
         self._results: dict[int, _NativeResult] = {}
+        # Exact callback pump owners prevent duplicate consumption and transport release between polling calls.
+        # 精确回调泵所有者阻止重复消费及轮询调用间隙中的传输释放。
+        self._callback_pumps: dict[str, object] = {}
         # None only after actual native free has succeeded.
         # 仅在实际原生释放成功后为 None。
         self._transport_id: int | None = None
@@ -238,48 +241,11 @@ class EmbeddedTransport:
 
     def request(self, command: Mapping[str, Any]) -> Any:
         """
-        Send a root command, free its native result exactly once, and return the successful JSON result.
-        发送根命令，精确一次释放其原生结果，并返回成功 JSON 结果。
-        Native and business failures raise different error classes; JSON null returns None without losing presence.
-        原生失败与业务失败抛出不同错误类；JSON 空值返回 None，但不会丢失字段存在性。
+        Send a root command and return its successful result, separating native and business failures.
+        发送根命令并返回成功结果，区分原生失败与业务失败。
         """
-        # Strict JSON never converts NaN or infinity into an invalid native request.
-        # 严格 JSON 绝不将 NaN 或无穷大转换为无效原生请求。
-        encoded = json.dumps(
-            {"protocol_version": EMBEDDED_PROTOCOL_VERSION, "command": dict(command)},
-            ensure_ascii=False, allow_nan=False, separators=(",", ":"),
-        ).encode("utf-8")
-        if len(encoded) > self.config.max_request_bytes:
-            raise ValueError("embedded request exceeds max_request_bytes")
-        # Backing bytes remain alive until the synchronous ctypes call returns.
-        # 后备字节保持存活，直到同步 ctypes 调用返回。
-        storage = (ctypes.c_uint8 * len(encoded)).from_buffer_copy(encoded)
-        # Every native request receives its own zeroed result descriptor.
-        # 每个原生请求均取得独立清零的结果描述符。
-        result = _NativeResult()
-        # Local ownership extends through parsing and exact buffer release.
-        # 局部所有权延续到解析及精确缓冲释放完成。
-        identity = self._begin()
-        try:
-            self._check("luaskills_ffi_embedded_request_v1", self._request(
-                identity, FfiBorrowedBuffer(storage, len(encoded)), ctypes.byref(result),
-            ))
-            # Copy by explicit byte length, preserving embedded NUL and Unicode.
-            # 按显式字节长度复制，保留嵌入空字符及 Unicode。
-            text = ctypes.string_at(result.ptr, result.len).decode("utf-8")
-            return self._decode(text)
-        finally:
-            try:
-                # A Python interruption can be raised on return after native code has already published its result.
-                # 原生代码已发布结果后，Python 中断可能在返回时抛出。
-                if result.allocation_id != 0:
-                    with self._lock:
-                        self._results[result.allocation_id] = result
-                    self._check("luaskills_ffi_embedded_result_free_v1", self._result_free(identity, result))
-                    with self._lock:
-                        del self._results[result.allocation_id]
-            finally:
-                self._end()
+        return self._request_encoded(self._encode_request(command))
+
 
     @staticmethod
     def _decode(text: str) -> Any:
@@ -301,6 +267,55 @@ class EmbeddedTransport:
             if isinstance(error, dict) and set(error) == {"code", "message"} and isinstance(error["code"], str) and isinstance(error["message"], str):
                 raise EmbeddedRuntimeError(error["code"], error["message"])
         raise ValueError("invalid embedded response envelope")
+
+    def _encode_request(self, command: Mapping[str, Any]) -> bytes:
+        """
+        Freeze a strict command into owned, bounded UTF-8 bytes before native execution can start.
+        在原生执行能够开始前，将严格命令冻结为拥有型有界 UTF-8 字节。
+        """
+        # Exact serialization is shared by ordinary requests and retained callback acknowledgements.
+        # 普通请求及保留回调确认共享精确序列化。
+        encoded = json.dumps({"protocol_version":EMBEDDED_PROTOCOL_VERSION, "command":dict(command)},
+            ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode("utf-8")
+        if len(encoded) > self.config.max_request_bytes:
+            raise ValueError("embedded request exceeds max_request_bytes")
+        return encoded
+
+    def _request_encoded(self, encoded: bytes) -> Any:
+        """
+        Execute already-owned command bytes and release exact native output even if decoding or Python return is interrupted.
+        执行已拥有命令字节；即使解码或 Python 返回被中断，也释放精确原生输出。
+        """
+        if len(encoded) > self.config.max_request_bytes:
+            raise ValueError("embedded request exceeds max_request_bytes")
+        # Backing bytes stay alive until the synchronous native call has returned.
+        # 后备字节保持存活，直到同步原生调用返回。
+        storage = (ctypes.c_uint8 * len(encoded)).from_buffer_copy(encoded)
+        # Each invocation owns one independently zeroed descriptor.
+        # 每次调用拥有一个独立清零的描述符。
+        result = _NativeResult()
+        # Local call ownership extends through parsing and release.
+        # 局部调用所有权延续到解析及释放完成。
+        identity = self._begin()
+        try:
+            self._check("luaskills_ffi_embedded_request_v1", self._request(
+                identity, FfiBorrowedBuffer(storage, len(encoded)), ctypes.byref(result)))
+            # Copy by explicit length to preserve embedded NUL and Unicode.
+            # 按显式长度复制，保留嵌入空字符及 Unicode。
+            text = ctypes.string_at(result.ptr, result.len).decode("utf-8")
+            return self._decode(text)
+        finally:
+            try:
+                # Native publication may finish before a Python interruption is raised on return.
+                # 原生发布可能在 Python 返回时抛出中断前已经完成。
+                if result.allocation_id != 0:
+                    with self._lock:
+                        self._results[result.allocation_id] = result
+                    self._check("luaskills_ffi_embedded_result_free_v1", self._result_free(identity, result))
+                    with self._lock:
+                        del self._results[result.allocation_id]
+            finally:
+                self._end()
 
     def close(self) -> None:
         """
@@ -337,7 +352,31 @@ class EmbeddedTransport:
         with self._lock:
             if self._transport_id is None:
                 raise RuntimeError("embedded transport has been freed")
-            if self._active_calls or self._results:
+            if self._active_calls or self._results or self._callback_pumps:
                 raise RuntimeError("embedded transport still owns active calls or results")
             self._check("luaskills_ffi_embedded_transport_free_v1", self._free(self._transport_id))
             self._transport_id = None
+
+    def _claim_callback_pump(self, runtime_id: str, owner: object) -> None:
+        """
+        Retain one exact pump owner for a runtime before its thread starts; this is SDK ownership, not native registration.
+        在线程启动前为运行时保留一个精确泵所有者；这是 SDK 所有权，而非原生注册。
+        """
+        with self._lock:
+            if self._transport_id is None:
+                raise RuntimeError("embedded transport has been freed")
+            if runtime_id in self._callback_pumps:
+                raise RuntimeError("embedded runtime already has a Python callback pump")
+            if len(self._callback_pumps) >= self.config.max_runtimes:
+                raise RuntimeError("callback pump ownership exceeds transport runtime capacity")
+            self._callback_pumps[runtime_id] = owner
+
+    def _release_callback_pump(self, runtime_id: str, owner: object) -> None:
+        """
+        Release only the exact pump owner after all of its real threads and native calls have drained.
+        仅在实际线程及原生调用全部排空后释放精确泵所有者。
+        """
+        with self._lock:
+            if self._callback_pumps.get(runtime_id) is not owner:
+                raise RuntimeError("callback pump ownership identity does not match")
+            del self._callback_pumps[runtime_id]

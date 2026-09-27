@@ -391,9 +391,25 @@ Pass an explicit `EmbeddedTransportConfig` and the existing `library_path` or `r
 
 Requests may run concurrently. `close()` permanently requests closure while keeping core queries and host acknowledgements available. Drain and remove every runtime with the core lifecycle commands, then call `free()`. Failed native free leaves the transport available for drainage; no destructor silently frees live runtimes or unloads the library. If result release explicitly fails, the exact descriptor remains owned and `release_results()` can retry after active calls have returned.
 
-The current binding exposes the low-level transport. Typed runtime helpers, automatic callback pumping and `asyncio` integration are still under implementation. Until those helpers land, the host must pump queued requests and acknowledge actual handler completion, including after cancellation. Blocking waits must not consume all transport admission or block the only thread responsible for callbacks.
+`EmbeddedCallbackPump(transport, runtime_id, config)` owns queued Python callbacks for an already initialized runtime. Supply `CallbackPumpConfig(max_concurrent_handlers=..., max_pending_commands=..., poll_interval_ms=...)` with explicit positive limits. Exactly one pump may own a runtime on a transport. Register its queued capabilities exclusively through that pump; do not separately consume the same core request queue. Typed runtime construction and invocation helpers remain under implementation.
+
+| API | Contract |
+| --- | --- |
+| `HostCapability(descriptor, handler, mode)` | Uses the exact queued core descriptor; `mode` is explicitly `sync` or `async`. The pump snapshots the descriptor and retains the actual handler. |
+| `register(...)` / `register_async(...)` | Publish one atomic batch and return immutable registration IDs. Replacements never reroute existing requests by name. |
+| `unregister(id, timeout=...)` / `unregister_async(id)` | Stop new dispatch and wait for actual handler drainage. Already dispatched handlers are not cancelled merely by unregistering. |
+| `request_close()` / `close(timeout=...)` / `close_async()` | Retire all handlers; actual closure waits for callbacks, acknowledgements and owned threads. A timeout or cancelled observer preserves ownership. |
+| `status` / `retry_acknowledgements(timeout=...)` | Expose retained identities and acknowledgement failures. Explicit delivery retry never repeats a business handler; lost success receipts require exact core completion evidence. |
+
+Each handler receives `(arguments, context)` and returns its ordinary JSON value, including `None`. `context.caller`, `request_id` and `registration_id` carry trusted core identity independently of application arguments. Cancellation is cooperative: use `raise_if_cancelled()`, `wait_cancelled(timeout)` or `await wait_cancelled_async()` and explicitly cancel the original operation when needed. `remaining_ms` is advisory. Mutating handlers report actual effects with `context.report_effects(...)`; the default is `unknown`, and neither success nor cancellation implies commit or rollback. Exceptions, invalid JSON and oversized results retain the last effect report.
+
+Synchronous handlers run on bounded workers. Asynchronous handlers run on the pump's dedicated event loop and must use resources created for that loop. They must not block it, return before their own effects finish, or wait for the same pump to drain from within a callback. Cancelling a caller's asyncio task or closing its loop does not cancel the owned handler or unregister task. After runtime cancellation, keep the pump alive through actual handler completion, close the pump, then free the native runtime and transport. If acknowledgement recovery cannot establish exact completion, retain the operation record and resolve the reported error; do not forget that evidence or unload the library.
+
+The low-level transport remains callable concurrently. Blocking native waits must not consume every transport admission slot; reserve capacity for the callback pump and control operations. The pump itself uses short control requests and never issues `operation_wait`.
 
 Native integration coverage is in `tests/test_embedded_native_e2e.py`. With `PYTHONPATH=src` and `LUASKILLS_LIB` selecting the matching development library, run `rtk proxy python -m unittest discover -s tests -p test_embedded_native_e2e.py -v`. These tests exercise actual Lua state, structured values, cancellation, concurrent control and late committed callback results.
+
+Run the same command with `-p test_embedded_pump.py` for real sync/async callback lifetime, bounded admission, caller-loop cancellation, late effects and lost-acknowledgement recovery. Full SDK regression uses `rtk proxy python -m unittest discover -s tests -v` with those same environment variables.
 
 ## Migration Notes
 

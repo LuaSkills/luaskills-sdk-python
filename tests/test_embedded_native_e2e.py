@@ -15,11 +15,10 @@ from pathlib import Path
 from luaskills import EmbeddedRuntimeError, EmbeddedTransport, EmbeddedTransportConfig, EmbeddedTransportError, create_engine_options
 
 
-@unittest.skipUnless(os.environ.get("LUASKILLS_LIB"), "LUASKILLS_LIB is not configured")
-class EmbeddedNativeIntegrationTests(unittest.TestCase):
+class EmbeddedNativeFixture:
     """
-    Verify real C signatures, core lifetime, Lua state and callback ownership without mock native calls.
-    验证实际 C 签名、核心寿命、Lua 状态及回调所有权，不模拟原生调用。
+    Share one isolated real native runtime layout across transport and callback integration tests.
+    在传输与回调集成测试之间共享一个隔离的实际原生运行时布局。
     """
 
     def setUp(self):
@@ -127,6 +126,13 @@ class EmbeddedNativeIntegrationTests(unittest.TestCase):
                 return snapshot
             self.assertLess(time.monotonic(), deadline, snapshot)
             time.sleep(0.001)
+
+@unittest.skipUnless(os.environ.get("LUASKILLS_LIB"), "LUASKILLS_LIB is not configured")
+class EmbeddedNativeIntegrationTests(EmbeddedNativeFixture, unittest.TestCase):
+    """
+    Verify real C signatures, core lifetime, Lua state and callback ownership without mock native calls.
+    验证实际 C 签名、核心寿命、Lua 状态及回调所有权，不模拟原生调用。
+    """
 
     def test_actual_lua_state_json_types_and_native_lifecycle(self):
         """

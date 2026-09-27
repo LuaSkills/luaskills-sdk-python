@@ -38,6 +38,8 @@ from .embedded_transport import (
     EmbeddedTransportConfig,
     EmbeddedTransportError,
 )
+from .embedded_callbacks import EffectState, HostCallbackContext, HostCapability
+from .embedded_pump import CallbackPumpConfig, EmbeddedCallbackPump
 from .ffi import (
     HostToolJsonAction,
     HostToolJsonCallback,
@@ -115,10 +117,15 @@ from .types import (
 
 __all__ = [
     "Authority",
+    "CallbackPumpConfig",
+    "EffectState",
+    "EmbeddedCallbackPump",
     "EmbeddedRuntimeError",
     "EmbeddedTransport",
     "EmbeddedTransportConfig",
     "EmbeddedTransportError",
+    "HostCallbackContext",
+    "HostCapability",
     "HostToolJsonAction",
     "HostToolJsonCallback",
     "HostToolJsonRequest",
