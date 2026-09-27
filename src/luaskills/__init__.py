@@ -40,6 +40,7 @@ from .embedded_transport import (
 )
 from .embedded_callbacks import EffectState, HostCallbackContext, HostCapability
 from .embedded_pump import CallbackPumpConfig, EmbeddedCallbackPump
+from .embedded_contract import EmbeddedNativeStatus
 from .ffi import (
     HostToolJsonAction,
     HostToolJsonCallback,
@@ -116,6 +117,7 @@ from .types import (
 )
 
 __all__ = [
+    "EmbeddedNativeStatus",
     "Authority",
     "CallbackPumpConfig",
     "EffectState",

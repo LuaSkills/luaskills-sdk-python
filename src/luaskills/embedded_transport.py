@@ -13,12 +13,8 @@ import threading
 from dataclasses import dataclass, fields
 from typing import Any, Mapping
 
+from .embedded_contract import EMBEDDED_PROTOCOL_VERSION, EmbeddedNativeStatus
 from .ffi import FfiBorrowedBuffer, resolve_library_path
-
-
-# The version selected by these exact five native entrypoints; never negotiate a legacy fallback.
-# 这五个精确原生入口选择的版本；绝不协商旧协议兜底。
-EMBEDDED_PROTOCOL_VERSION = 1
 
 
 class EmbeddedTransportError(RuntimeError):
@@ -217,7 +213,7 @@ class EmbeddedTransport:
         Raise exact transport failure for nonzero status without interpreting business results.
         为非零状态抛出精确传输失败，不解释业务结果。
         """
-        if status != 0:
+        if status != EmbeddedNativeStatus.OK:
             raise EmbeddedTransportError(function_name, status)
 
     def _begin(self) -> int:

@@ -12,14 +12,12 @@ import threading
 import time
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any, Callable, Literal, Mapping
+from typing import Any, Callable, Literal, Mapping, get_args
 
+from .embedded_contract import OutputEffectState as EffectState
 from .embedded_transport import EmbeddedRuntimeError
 
 
-# Values match the core EffectState wire contract; no success or cancellation implies a commit or rollback.
-# 值匹配核心 EffectState 线契约；成功或取消均不隐含提交或回滚。
-EffectState = Literal["not_started", "not_applicable", "committed", "rolled_back", "unknown"]
 # A callback's active runtime identity also travels into its synchronous worker context.
 # 回调的活动运行时身份也传入其同步工作线程上下文。
 HOST_CALLBACK_RUNTIME: contextvars.ContextVar[str | None] = contextvars.ContextVar("luaskills_host_callback_runtime", default=None)
@@ -132,7 +130,7 @@ class HostCallbackContext:
         Record actual transaction evidence; callers must not infer this value from cancellation or success.
         记录实际事务证据；调用方不得从取消或成功推断此值。
         """
-        if effects not in ("not_started", "not_applicable", "committed", "rolled_back", "unknown"):
+        if effects not in get_args(EffectState):
             raise ValueError("unknown host effect state")
         with self._lock:
             self._effects = effects

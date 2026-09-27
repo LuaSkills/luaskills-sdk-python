@@ -385,6 +385,8 @@ finally:
 
 ## 嵌入式运行时传输（开发中）
 
+线类型位于 `luaskills.embedded_contract`：分开的 `Input*` 和 `Output*` 声明保留字段缺失与显式空值的区别，同时保留 Python 任意精度整数。生成的 `EmbeddedNativeStatus` 也在包顶层导出。传输与回调泵使用这些生成的协议和副作用常量。详见随包分发的[离线契约及同步说明](src/luaskills/contracts/embedded/v1/README.md)；运行 `python scripts/generate_embedded_contract.py --check` 拒绝过期产物。wheel 和源码分发包均包含核心的精确 JSON 与 SHA-256，源码分发包另外包含生成器。
+
 `EmbeddedTransport` 绑定五个版本一嵌入式 C 入口。此开发接口要求使用导出这些符号的匹配本地核心构建；已有 0.5.7 发布资产不提供该接口。版本提升和已发布资产对齐在发布冻结阶段完成。
 
 显式提供 `EmbeddedTransportConfig`，并使用既有 `library_path` 或 `runtime_root` 选择方式。`request(command)` 接收根命令并返回成功的 `result`，其中显式 JSON 空值返回 `None`。原生返回码通过带 `status` 的 `EmbeddedTransportError` 报告；已交付核心失败通过带 `code`、`message` 的 `EmbeddedRuntimeError` 报告。绑定保留身份全部 64 位；解码失败或 Python 在原生返回时抛出中断，仍会释放已返回结果。
@@ -410,6 +412,8 @@ finally:
 原生集成验证位于 `tests/test_embedded_native_e2e.py`。设置 `PYTHONPATH=src`，并以 `LUASKILLS_LIB` 选择匹配开发动态库后，运行 `rtk proxy python -m unittest discover -s tests -p test_embedded_native_e2e.py -v`。测试覆盖实际 Lua 状态、结构化值、取消、并发控制及迟到提交回调结果。
 
 将同一命令的测试模式改为 `-p test_embedded_pump.py`，可验证实际同步／异步回调寿命、有界入场、调用方循环取消、迟到副作用及确认丢失恢复。保持上述环境变量，使用 `rtk proxy python -m unittest discover -s tests -v` 运行 SDK 完整回归。
+
+事件泵同步观察等待超时在所有支持版本（包含 Python 3.10）均抛出内置 `TimeoutError`。超时保留底层命令和回调所有权。异步观察者取消继续遵守前述拥有循环规则。
 
 ## 迁移说明
 

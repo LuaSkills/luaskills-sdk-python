@@ -34,4 +34,4 @@ Repository = "https://github.com/LuaSkills/luaskills-sdk-python"
 where = ["src"]
 
 [tool.setuptools.package-data]
-luaskills = ["py.typed"]
+luaskills = ["py.typed", "contracts/embedded/v1/*.json", "contracts/embedded/v1/*.sha256", "contracts/embedded/v1/*.md"]

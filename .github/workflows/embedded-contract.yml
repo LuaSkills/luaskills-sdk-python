@@ -1,0 +1,51 @@
+name: Embedded contract and packaging
+
+on:
+  pull_request:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2025, macos-15-intel]
+        python: ['3.10', '3.14']
+    runs-on: ${{ matrix.os }}
+    steps:
+      # Pin verified v7 identities so an action tag cannot change this verification pipeline.
+      # 固定已核实的 v7 身份，使 action 标签无法改变此验证流程。
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install build and type verification tools
+        run: python -m pip install build==1.5.0 mypy==2.3.1
+      - name: Verify exact offline generation
+        run: python scripts/generate_embedded_contract.py --check
+      - name: Check generated public types against minimum Python
+        run: python -m mypy --strict --follow-imports=skip --python-version 3.10 src/luaskills/embedded_contract.py
+      - name: Exercise offline contract behavior
+        env:
+          PYTHONPATH: src
+        run: python -m unittest discover -s tests -p test_embedded_contract.py -v
+      - name: Build wheel from the source distribution
+        run: python -m build --outdir dist
+      - name: Verify both exact build artifacts
+        shell: python
+        run: |
+          import pathlib
+          import subprocess
+          import sys
+          # A clean CI build must produce exactly one artifact of each kind.
+          # 干净 CI 构建必须对每种产物恰好生成一个文件。
+          wheels = list(pathlib.Path('dist').glob('*.whl'))
+          sources = list(pathlib.Path('dist').glob('*.tar.gz'))
+          if len(wheels) != 1 or len(sources) != 1:
+              raise SystemExit('expected exactly one wheel and one source distribution')
+          subprocess.run([sys.executable, 'scripts/verify_embedded_distribution.py',
+                          '--wheel', str(wheels[0]), '--sdist', str(sources[0])], check=True)

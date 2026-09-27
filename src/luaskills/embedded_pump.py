@@ -11,10 +11,12 @@ import inspect
 import sys
 import threading
 from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import dataclass, field
 from typing import Any, Coroutine, Iterable
 
 from .embedded_callbacks import HOST_CALLBACK_RUNTIME, HostCallbackContext, HostCapability
+from .embedded_contract import EmbeddedNativeStatus
 from .embedded_transport import EmbeddedRuntimeError, EmbeddedTransport, EmbeddedTransportError
 
 
@@ -373,7 +375,7 @@ class EmbeddedCallbackPump:
                     # 仅请求入口的 InvalidArgument 能证明此精确帧在分发前被拒绝。
                     # Result-release failures may follow a successful mutation and must never rewrite that completion.
                     # 结果释放失败可能发生在变更成功后，绝不能改写该完成结果。
-                    if error.function_name != "luaskills_ffi_embedded_request_v1" or error.status != 1:
+                    if error.function_name != "luaskills_ffi_embedded_request_v1" or error.status != EmbeddedNativeStatus.INVALID_ARGUMENT:
                         raise
                     record.outcome = {"ok":False, "error":{"code":"execution_failed",
                         "message":"Python host callback result was rejected by the native parser"},
@@ -542,7 +544,7 @@ class EmbeddedCallbackPump:
         仅重试失败确认交付；状态继续暴露剩余未解决身份。
         """
         self._check_wait()
-        self._submit(self._retry_acknowledgements(), drain=True).result(timeout)
+        self._wait(self._submit(self._retry_acknowledgements(), drain=True), timeout)
 
     def _check_wait(self) -> None:
         """
@@ -558,7 +560,7 @@ class EmbeddedCallbackPump:
         注册原子处理器批次；观察超时保留拥有任务及可从状态恢复的身份。
         """
         self._check_wait()
-        return self._submit(self._register(tuple(item.snapshot() for item in capabilities))).result(timeout)
+        return self._wait(self._submit(self._register(tuple(item.snapshot() for item in capabilities))), timeout)
 
     async def register_async(self, capabilities: Iterable[HostCapability]) -> tuple[str, ...]:
         """
@@ -575,7 +577,7 @@ class EmbeddedCallbackPump:
         等待精确处理器实际排空；超时保持闭包所有权及清理活动。
         """
         self._check_wait()
-        self._submit(self._unregister(registration_id), drain=True).result(timeout)
+        self._wait(self._submit(self._unregister(registration_id), drain=True), timeout)
 
     async def unregister_async(self, registration_id: str) -> None:
         """
@@ -604,7 +606,7 @@ class EmbeddedCallbackPump:
         """
         self._check_wait()
         self.request_close()
-        self._closed.result(timeout)
+        self._wait(self._closed, timeout)
         self._thread.join()
 
     async def close_async(self) -> None:
@@ -616,6 +618,21 @@ class EmbeddedCallbackPump:
         self.request_close()
         await self._observe(self._closed)
         await asyncio.to_thread(self._thread.join)
+
+    @staticmethod
+    def _wait(future: Future, timeout: float | None) -> Any:
+        """
+        Observe future for timeout seconds and expose built-in TimeoutError on every supported Python version.
+        在 timeout 秒内观察 future，并在所有受支持 Python 版本暴露内置 TimeoutError。
+        Return its actual result; timing out never cancels the future or releases its retained ownership.
+        返回其实际结果；等待超时绝不取消 future 或释放其保留所有权。
+        """
+        try:
+            return future.result(timeout)
+        except FutureTimeoutError as error:
+            # Python 3.10 has a distinct futures exception; 3.11 made it an alias of the built-in class.
+            # Python 3.10 使用独立 futures 异常；3.11 才将其变为内置类的别名。
+            raise TimeoutError("embedded callback pump wait timed out") from error
 
     @staticmethod
     async def _observe(future: Future) -> Any:

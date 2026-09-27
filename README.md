@@ -385,6 +385,8 @@ finally:
 
 ## Embedded Runtime Transport (Development)
 
+Wire types live in `luaskills.embedded_contract`: separate `Input*` and `Output*` declarations preserve missing fields versus explicit null, including arbitrary-precision Python integers. The generated `EmbeddedNativeStatus` is also available at package level. The transport and callback pump use these generated protocol and effect constants. See the packaged [offline contract and synchronization instructions](src/luaskills/contracts/embedded/v1/README.md); run `python scripts/generate_embedded_contract.py --check` to reject stale output. The wheel and source distribution both carry the exact core JSON and SHA-256, and the source distribution includes the generator.
+
 `EmbeddedTransport` binds the five version-one embedded C entrypoints. This development API requires a matching locally built core exporting those symbols; the existing 0.5.7 release assets do not provide it. The version bump and published asset alignment are handled at release freeze.
 
 Pass an explicit `EmbeddedTransportConfig` and the existing `library_path` or `runtime_root` selection. `request(command)` accepts a root command and returns its successful `result`, including `None` for explicit JSON null. Native return codes raise `EmbeddedTransportError` with `status`; delivered core failures raise `EmbeddedRuntimeError` with `code` and `message`. The binding preserves all 64 identity bits and releases each native result even when decoding fails or Python raises an interruption at native return.
@@ -410,6 +412,8 @@ The low-level transport remains callable concurrently. Blocking native waits mus
 Native integration coverage is in `tests/test_embedded_native_e2e.py`. With `PYTHONPATH=src` and `LUASKILLS_LIB` selecting the matching development library, run `rtk proxy python -m unittest discover -s tests -p test_embedded_native_e2e.py -v`. These tests exercise actual Lua state, structured values, cancellation, concurrent control and late committed callback results.
 
 Run the same command with `-p test_embedded_pump.py` for real sync/async callback lifetime, bounded admission, caller-loop cancellation, late effects and lost-acknowledgement recovery. Full SDK regression uses `rtk proxy python -m unittest discover -s tests -v` with those same environment variables.
+
+Synchronous pump observation timeouts raise the built-in `TimeoutError` on every supported Python version, including 3.10. The timeout preserves the underlying command and callback ownership. Async observer cancellation follows the owning-loop rules above.
 
 ## Migration Notes
 

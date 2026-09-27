@@ -1,0 +1,4 @@
+# Preserve the exact upstream digest bytes and reproducible generated source.
+# 保留上游精确摘要字节及可复现生成源码。
+/src/luaskills/contracts/embedded/v1/* text eol=lf
+/src/luaskills/embedded_contract.py text eol=lf
