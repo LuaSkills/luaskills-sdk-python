@@ -392,8 +392,8 @@ def generate(document: dict[str, Any], encoded: bytes) -> bytes:
         '"""', "", "from __future__ import annotations", "",
         "from enum import IntEnum",
         "from typing import Dict, List, Literal, TypeAlias, TypedDict, Union", "",
-        "# Recursive JSON values preserve arbitrary Python integers and explicit null separately from absence.",
-        "# 递归 JSON 值保留任意 Python 整数，并将显式空值与缺失分开。",
+        "# Recursive JSON values preserve exact integers within native bounds and explicit null separately from absence.",
+        "# 递归 JSON 值保留原生边界内的精确整数，并将显式空值与缺失分开。",
         'JsonValue: TypeAlias = Union[None, bool, int, float, str, List["JsonValue"], Dict[str, "JsonValue"]]', "",
     ]
     for name, value in {

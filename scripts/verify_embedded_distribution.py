@@ -23,6 +23,7 @@ PACKAGE_ARTIFACTS = (
     "luaskills/embedded_scope.py",
     "luaskills/embedded_driver.py",
     "luaskills/embedded_transport.py",
+    "luaskills/embedded_json.py",
     "luaskills/embedded_pump.py",
     "luaskills/embedded_callbacks.py",
     "luaskills/embedded_contract.py",
@@ -89,6 +90,11 @@ for name in contract.__all__:
         typing.get_type_hints(declaration)
 """
     subprocess.run([sys.executable, "-I", "-c", probe, str(path.resolve())], check=True)
+    # Execute shared assertions against the wheel's codec and resources in another isolated interpreter.
+    # 在另一隔离解释器中，对 wheel 的编码器及资源执行共享断言。
+    vector_probe = "import runpy, sys; sys.path.insert(0, sys.argv[1]); suite = sys.argv[2]; sys.argv = [suite]; runpy.run_path(suite, run_name='__main__')"
+    subprocess.run([sys.executable, "-I", "-c", vector_probe, str(path.resolve()),
+        str(ROOT / "tests/test_embedded_json_vectors.py")], check=True)
 
 
 def verify_sdist(path: Path) -> None:
@@ -110,7 +116,7 @@ def verify_sdist(path: Path) -> None:
         prefix = next(iter(roots)) + "/"
         # Only these verified files are materialized; tar names never become destination filesystem paths.
         # 只落盘这些经验证文件；tar 名称绝不成为目标文件系统路径。
-        artifacts = ["scripts/generate_embedded_contract.py", "scripts/verify_embedded_distribution.py", *("src/" + name for name in PACKAGE_ARTIFACTS)]
+        artifacts = ["scripts/generate_embedded_contract.py", "scripts/verify_embedded_distribution.py", "tests/test_embedded_json_vectors.py", *("src/" + name for name in PACKAGE_ARTIFACTS)]
         destination = Path(temporary)
         for name in artifacts:
             member = archive.getmember(prefix + name)

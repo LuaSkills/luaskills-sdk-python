@@ -203,6 +203,10 @@ cython_debug/
 # Temporary file for partial code execution
 tempCodeRunnerFile.py
 
+# Keep local validation logs and development distribution archives out of source releases.
+# 本地验证日志及开发分发归档不进入源码发布。
+.temp/
+
 # Ruff stuff:
 .ruff_cache/
 

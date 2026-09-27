@@ -10,8 +10,8 @@ from __future__ import annotations
 from enum import IntEnum
 from typing import Dict, List, Literal, TypeAlias, TypedDict, Union
 
-# Recursive JSON values preserve arbitrary Python integers and explicit null separately from absence.
-# 递归 JSON 值保留任意 Python 整数，并将显式空值与缺失分开。
+# Recursive JSON values preserve exact integers within native bounds and explicit null separately from absence.
+# 递归 JSON 值保留原生边界内的精确整数，并将显式空值与缺失分开。
 JsonValue: TypeAlias = Union[None, bool, int, float, str, List["JsonValue"], Dict[str, "JsonValue"]]
 
 # Generated contract metadata: EMBEDDED_PROTOCOL_VERSION.
@@ -28,7 +28,7 @@ EMBEDDED_CORE_VERSION = '0.5.9'
 
 # Generated contract metadata: EMBEDDED_CONTRACT_SHA256.
 # 生成的契约元数据：EMBEDDED_CONTRACT_SHA256。
-EMBEDDED_CONTRACT_SHA256 = '4962b82e6d37ec1822f4928f0fd44041bc7b45727e3c2eca2037a4eb15a34842'
+EMBEDDED_CONTRACT_SHA256 = '03674807fcd4ea0249915fd210eb5caeaa31e9ec6471feff1e3f39977876e9a1'
 
 # Generated contract metadata: EMBEDDED_ROOT_COMMANDS.
 # 生成的契约元数据：EMBEDDED_ROOT_COMMANDS。

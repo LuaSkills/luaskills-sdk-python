@@ -385,7 +385,9 @@ finally:
 
 ## 嵌入式运行时传输（开发中）
 
-线类型位于 `luaskills.embedded_contract`：分开的 `Input*` 和 `Output*` 声明保留字段缺失与显式空值的区别，同时保留 Python 任意精度整数。生成的 `EmbeddedNativeStatus` 也在包顶层导出。传输与回调泵使用这些生成的协议和副作用常量。详见随包分发的[离线契约及同步说明](src/luaskills/contracts/embedded/v1/README.md)；运行 `python scripts/generate_embedded_contract.py --check` 拒绝过期产物。wheel 和源码分发包均包含核心的精确 JSON 与 SHA-256，源码分发包另外包含生成器。
+线类型位于 `luaskills.embedded_contract`：分开的 `Input*` 和 `Output*` 声明保留字段缺失与显式空值的区别，同时保留原生有符号／无符号 64 位范围内的精确整数。生成的 `EmbeddedNativeStatus` 也在包顶层导出。传输与回调泵使用这些生成的协议和副作用常量。详见随包分发的[离线契约及同步说明](src/luaskills/contracts/embedded/v1/README.md)；运行 `python scripts/generate_embedded_contract.py --check` 拒绝过期产物。wheel 和源码分发包均包含核心的精确 JSON 与 SHA-256，其中包括共享 JSON 向量，源码分发包另外包含生成器。
+
+嵌入式请求接受对象键为字符串的内置 JSON 值。在原生提交前拒绝元组、自定义嵌套容器、键强制转换、循环、非有限数、越界整数和不成对 Unicode 代理。响应解码拒绝解码后重复键，保留负零、整数值浮点数、完整整数位和显式空值。畸形响应仍遵守传输的拥有型结果释放协议。此严格编码器作用于新嵌入式接口；旧 JSON FFI 的行为保持原样。
 
 `EmbeddedTransport` 绑定五个版本一嵌入式 C 入口。此开发接口要求使用导出这些符号的匹配本地核心构建；已有 0.5.7 发布资产不提供该接口。版本提升和已发布资产对齐在发布冻结阶段完成。
 

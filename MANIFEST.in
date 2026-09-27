@@ -5,3 +5,4 @@ include VERSION
 recursive-include examples *.py *.md *.yaml *.lua
 recursive-include contracts *.json
 recursive-include scripts *.py *.ps1 *.sh
+include tests/test_embedded_json_vectors.py

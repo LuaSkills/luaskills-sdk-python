@@ -6,7 +6,6 @@ Owned, thread-safe bindings for the version-one embedded runtime transport.
 from __future__ import annotations
 
 import ctypes
-import json
 import os
 import sys
 import threading
@@ -14,6 +13,7 @@ from dataclasses import dataclass, fields
 from typing import Any, Mapping
 
 from .embedded_contract import EMBEDDED_PROTOCOL_VERSION, EmbeddedNativeStatus
+from .embedded_json import decode_embedded_json, encode_embedded_json
 from .ffi import FfiBorrowedBuffer, resolve_library_path
 
 
@@ -317,7 +317,7 @@ class EmbeddedTransport:
         """
         # Native UTF-8 has already been decoded strictly before parsing.
         # 原生 UTF-8 已在解析前严格解码。
-        envelope = json.loads(text)
+        envelope = decode_embedded_json(text)
         if not isinstance(envelope, dict) or type(envelope.get("protocol_version")) is not int or envelope["protocol_version"] != EMBEDDED_PROTOCOL_VERSION:
             raise ValueError("invalid embedded response protocol version")
         if envelope.get("status") == "ok" and set(envelope) == {"protocol_version", "status", "result"}:
@@ -337,11 +337,8 @@ class EmbeddedTransport:
         """
         # Exact serialization is shared by ordinary requests and retained callback acknowledgements.
         # 普通请求及保留回调确认共享精确序列化。
-        encoded = json.dumps({"protocol_version":EMBEDDED_PROTOCOL_VERSION, "command":dict(command)},
-            ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode("utf-8")
-        if len(encoded) > self.config.max_request_bytes:
-            raise ValueError("embedded request exceeds max_request_bytes")
-        return encoded
+        return encode_embedded_json({"protocol_version":EMBEDDED_PROTOCOL_VERSION,
+            "command":dict(command)}, self.config.max_request_bytes)
 
     def _request_encoded(self, encoded: bytes) -> Any:
         """
