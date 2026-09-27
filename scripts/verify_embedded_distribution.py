@@ -26,6 +26,7 @@ PACKAGE_ARTIFACTS = (
     "luaskills/embedded_json.py",
     "luaskills/embedded_compatibility.py",
     "luaskills/embedded_pump.py",
+    "luaskills/embedded_pump_delivery.py",
     "luaskills/embedded_callbacks.py",
     "luaskills/embedded_contract.py",
     "luaskills/contracts/embedded/v1/contract.json",

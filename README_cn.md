@@ -433,7 +433,13 @@ finally:
 | `register(...)` / `register_async(...)` | 原子发布一个批次并返回不可变注册身份。同名替换不会重定向既有请求。 |
 | `unregister(id, timeout=...)` / `unregister_async(id)` | 停止新分发并等待实际处理器排空。仅注销不会取消已分发处理器。 |
 | `request_close()` / `close(timeout=...)` / `close_async()` | 退役全部处理器；实际关闭等待回调、确认及拥有线程。超时或观察者取消仍保留所有权。 |
-| `status` / `retry_acknowledgements(timeout=...)` | 暴露保留身份及确认失败。显式交付重试绝不重跑业务处理器；成功回执丢失时必须核对精确核心完成证据。 |
+| `status` / `recovery_required` / `retry_acknowledgements(timeout=...)` | 暴露保留身份及当前恢复需求。恢复原始控制回执及失败完成确认，不重复业务处理器。 |
+
+事件泵在进入原生前保留一条精确控制变更。注册、队列提取、注销及遗忘的交付不确定期间，不能再次提交这些变更。`status["pending_native_command"]` 标识保留命令；`recovery_required` 不包含普通在途工作，并与历史 `failure` 诊断分离。显式恢复释放保留缓冲、应用原复制回执，并通过精确核心副作用证据核对失败完成。原交付缺失或无效时仍报告错误并保留所有权；确认解决前须保留原操作的副作用记录。
+
+事件泵消费查询证据前，要求其中携带精确请求、操作或注册身份。请求阶段来自生成契约，注册排空必须为布尔标记。身份错配的完成状态不能丢弃待确认请求。
+
+普通已提交命令继续受 `max_pending_commands` 限制；额外预留一个共享恢复尝试，避免注销等待者耗尽恢复入口。所有路径仍使用同一个预留原生控制线程。并发恢复观察者共享该尝试，观察超时不会提前释放容量。`EmbeddedRuntimeScope` 将回调恢复需求报告为可重试排空失败，避免无限等待；`retry_close(...)` 显式恢复事件泵，再沿同一关闭检查点继续。正常存活处理器仍等待实际返回。
 
 处理器接收 `(arguments, context)`，返回普通 JSON 值，包含 `None`。`context.caller`、`request_id`、`registration_id` 独立于应用参数携带可信核心身份。取消是协作式的：使用 `raise_if_cancelled()`、`wait_cancelled(timeout)` 或 `await wait_cancelled_async()`；需要取消执行时显式取消原操作。`remaining_ms` 仅供参考。变更处理器通过 `context.report_effects(...)` 报告真实副作用，默认值为 `unknown`；成功或取消均不隐含提交／回滚。异常、非法 JSON 及超大结果仍保留最近的副作用报告。完成帧被原生请求解析器明确拒绝时，转换为携带相同副作用的有界回调失败；已返回原生结果的释放失败不能授权改写该完成结果。
 

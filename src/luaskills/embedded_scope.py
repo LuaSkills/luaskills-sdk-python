@@ -66,6 +66,9 @@ class EmbeddedRuntimeScope:
         self._entered = False
         self._phase: _Phase = "open"
         self._attempt: Future[None] | None = None
+        # Each published attempt records explicit recovery intent separately from ordinary close observation.
+        # 每个已发布尝试分别记录显式恢复意图与普通关闭观察。
+        self._attempt_retry = False
         self._failure: BaseException | None = None
         # A delivered result-release failure permits exact buffer recovery, not mutation replay.
         # 已交付结果的释放失败允许精确缓冲恢复，不允许变更重放。
@@ -180,7 +183,32 @@ class EmbeddedRuntimeScope:
         self._validate_control(command_type, result)
         self._set_phase(following)
 
-    def _drain(self) -> None:
+    def _drain_callbacks(self, retry: bool) -> None:
+        """
+        Drain the exact pump or report current recovery needs; retry authorizes its retained delivery recovery.
+        排空精确事件泵或报告当前恢复需求；retry 授权恢复其保留交付。
+        Return only after its actual coordinator joins, without mistaking historical failure for pending recovery.
+        仅在其实际协调器汇合后返回，不将历史失败误认为待恢复状态。
+        """
+        pump = self._pump
+        if pump is None:
+            return
+        pump.request_close()
+        if retry and pump.recovery_required and not pump._closed.done():
+            try:
+                pump.retry_acknowledgements()
+            except EmbeddedRuntimeError as error:
+                # Concurrent explicit recovery may finish closure before this observer enters; require actual proof.
+                # 并发显式恢复可能在此观察者入场前完成关闭；必须取得实际证明。
+                if error.code != "closed" or not pump._closed.done():
+                    raise
+        while not pump._closed.done():
+            if pump.recovery_required:
+                raise EmbeddedRuntimeError("busy", "callback pump requires explicit delivery recovery before runtime release")
+            time.sleep(self._poll_interval)
+        pump.close()
+
+    def _drain(self, retry: bool = False) -> None:
         """
         Resume from the last proven checkpoint; return only after actual pump, core and slot release.
         从最后得到证明的检查点继续；仅在实际泵、核心及槽释放后返回。
@@ -193,8 +221,7 @@ class EmbeddedRuntimeScope:
         if self._phase == "closing_runtime":
             self._transition("runtime_close", "draining_callbacks")
         if self._phase == "draining_callbacks":
-            if self._pump is not None:
-                self._pump.close()
+            self._drain_callbacks(retry)
             self._set_phase("draining_runtime")
         if self._phase == "draining_runtime":
             while True:
@@ -238,16 +265,23 @@ class EmbeddedRuntimeScope:
                 # 发布先于唤醒；只有启动中止没有关闭尝试 future。
                 aborted = self._aborted
                 attempt = self._attempt
+                retry = self._attempt_retry
             if aborted:
                 self._release_claim_once()
                 return
             assert attempt is not None
             try:
-                self._drain()
+                self._drain(retry)
             except BaseException as error:
+                # Pump recovery owns its own journals and buffers; a busy drainage observer can safely retry.
+                # 泵恢复拥有自己的日志及缓冲；繁忙排空观察者可以安全重试。
+                callback_recovery = (self._phase == "draining_callbacks" and self._pump is not None
+                    and ((isinstance(error, EmbeddedRuntimeError) and error.code == "busy")
+                         or (not self._pump._closed.done() and self._pump.recovery_required)))
                 with self._lock:
                     self._failure = error
-                    self._release_failure = self._release_failure or isinstance(error, EmbeddedResultReleaseError)
+                    self._release_failure = self._release_failure or (
+                        self._phase != "draining_callbacks" and isinstance(error, EmbeddedResultReleaseError))
                     # Successful root mutations use pre-encoded receipts; queries are read-only and close is idempotent.
                     # 成功的根变更使用预编码回执；查询只读且关闭幂等。
                     # Capacity refusal on these controls cannot hide a successful slot removal.
@@ -255,7 +289,7 @@ class EmbeddedRuntimeScope:
                     capacity_rejected = (isinstance(error, EmbeddedTransportError)
                         and error.function_name == "luaskills_ffi_embedded_request_v1"
                         and error.status == EmbeddedNativeStatus.CAPACITY_EXCEEDED)
-                    self._retryable = (self._release_failure and not self._uncertain_delivery) or capacity_rejected
+                    self._retryable = (self._release_failure and not self._uncertain_delivery) or capacity_rejected or callback_recovery
                     attempt.set_exception(error)
             else:
                 with self._lock:
@@ -266,8 +300,8 @@ class EmbeddedRuntimeScope:
 
     def _request(self, retry: bool) -> Future[None]:
         """
-        Publish or observe one shutdown attempt; retry explicitly resumes buffer failures or bounded root-control capacity rejection.
-        发布或观察一次关闭尝试；retry 仅显式恢复缓冲失败或有界根控制容量拒绝。
+        Publish or observe one shutdown attempt; retry explicitly resumes buffers, callback recovery or root-control capacity rejection.
+        发布或观察一次关闭尝试；retry 显式恢复缓冲、回调恢复或根控制容量拒绝。
         Return a strongly retained future; ordinary repeated close never retries an uncertain native command.
         返回强引用保留 future；普通重复关闭绝不重试不确定原生命令。
         """
@@ -282,6 +316,7 @@ class EmbeddedRuntimeScope:
                     raise RuntimeError("runtime scope failure lacks evidence for a safe retry") from self._failure
                 self._attempt = Future()
                 self._failure = None
+                self._attempt_retry = True
                 self._retryable = False
                 self._wake.set()
             return self._attempt

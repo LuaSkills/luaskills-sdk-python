@@ -24,6 +24,7 @@ from luaskills import (
 )
 
 from test_embedded_native_e2e import EmbeddedNativeFixture
+from test_embedded_pump import PumpReleaseFault
 from test_embedded_transport import NativeLibrary
 
 
@@ -408,6 +409,55 @@ class EmbeddedScopeNativeTests(EmbeddedNativeFixture, unittest.TestCase):
         self.assertTrue(scope.status["closed"])
         self.assertTrue(pump.status["closed"])
         self.assertFalse(scope._thread.is_alive())
+
+    def test_scope_reports_callback_recovery_then_retries_without_replaying_handler(self):
+        """
+        Surface pump delivery failure as retryable drainage, then join exact cleanup after explicit recovery.
+        将泵交付失败报告为可重试排空，再于显式恢复后汇合精确清理。
+        """
+        pump = EmbeddedCallbackPump(self.transport, self.runtime_id, CallbackPumpConfig(
+            max_concurrent_handlers=1, max_pending_commands=4, poll_interval_ms=1))
+        self.addCleanup(pump.close, 5)
+        calls = []
+
+        def handler(arguments, context):
+            """
+            Record arguments once and retain committed effects in context; return null for completion validation.
+            记录 arguments 一次并在 context 中保留已提交副作用；返回空值用于完成校验。
+            """
+            calls.append(arguments)
+            context.report_effects("committed")
+            return None
+
+        pump.register([HostCapability({
+            "name": "scope.recovery", "version": "1.0.0", "description": "Scope delivery recovery callback",
+            "input_schema": True, "output_schema": True, "execution": "queued", "permissions": ["python.host"],
+            "scope": "invocation", "max_concurrent": 1, "max_call_ms": 10000,
+            "max_input_bytes": 1024, "max_output_bytes": 1024, "effects": "mutating", "idempotency": "none",
+        }, handler, "sync")], 5)
+        pool = self.pool("return {call=function(a) return vulcan.capabilities.call('scope.recovery',a) end}")
+        scope = self.scope(pump)
+        with PumpReleaseFault(self.transport, "host_request_complete") as fault:
+            operation = self.submit(pool, "once")
+            self.assertTrue(fault.failed.wait(5))
+            done = self.terminal(operation)
+            with self.assertRaisesRegex(EmbeddedRuntimeError, "explicit delivery recovery"):
+                scope.close(5)
+            self.assertEqual(scope.status["phase"], "draining_callbacks")
+            self.assertTrue(scope.status["retryable"])
+            self.assertTrue(pump.recovery_required)
+            with self.assertRaises(EmbeddedRuntimeError):
+                scope.close(5)
+            self.assertEqual(len(fault.successes), 1)
+            scope.retry_close(5)
+            self.assertTrue(scope.status["closed"])
+            self.assertTrue(pump.status["closed"])
+            self.assertFalse(pump.recovery_required)
+            self.assertIsNotNone(pump.status["failure"])
+            self.assertFalse(self.transport._results)
+            self.assertEqual(calls, ["once"])
+            self.assertEqual(len(fault.successes), 1)
+            self.assertTrue(any(effect["effects"] == "committed" for effect in done["host_effects"]))
 
     def test_pre_mutation_capacity_rejection_allows_explicit_close_retry(self):
         """

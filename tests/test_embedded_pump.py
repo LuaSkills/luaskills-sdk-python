@@ -6,6 +6,7 @@ Exercise the owned Python callback pump with actual Lua and the newly built nati
 from __future__ import annotations
 
 import asyncio
+import ctypes
 import json
 import os
 import sys
@@ -14,10 +15,78 @@ import time
 import unittest
 from unittest.mock import patch
 
-from luaskills import EmbeddedRuntimeError, EmbeddedTransportError
+from luaskills import EmbeddedResultReleaseError, EmbeddedRuntimeError, EmbeddedTransportError
 from luaskills.embedded_callbacks import HOST_CALLBACK_RUNTIME, HostCapability
+from luaskills.embedded_contract import EmbeddedNativeStatus
 from luaskills.embedded_pump import CallbackPumpConfig, EmbeddedCallbackPump
 from test_embedded_native_e2e import EmbeddedNativeFixture
+
+
+class PumpReleaseFault:
+    """
+    Fail one exact command's actual native result release while retaining its real success bytes.
+    保留真实成功字节，同时使一个精确命令的实际原生结果释放失败。
+    """
+
+    def __init__(self, transport, kind):
+        """
+        Bind transport and exact kind; count successful selected deliveries, excluding empty queue polls.
+        绑定 transport 及精确 kind；统计所选成功交付，不包含空队列轮询。
+        """
+        # Per-thread selection prevents unrelated driver or scope calls from receiving the injected failure.
+        # 线程局部选择防止无关驱动器或作用域调用收到注入失败。
+        self.transport = transport
+        self.kind = kind
+        self.local = threading.local()
+        self.failed = threading.Event()
+        self.successes = []
+        self.original_request = transport._request_encoded
+        self.original_free = transport._result_free
+
+    def request(self, encoded):
+        """
+        Execute encoded unchanged and identify only this thread's runtime operation for release injection.
+        原样执行 encoded，并仅标记此线程的运行时操作用于释放注入。
+        Return the real result or the original transport error.
+        返回真实结果或原始传输错误。
+        """
+        command = json.loads(encoded)["command"]
+        self.local.selected = command["type"] == "runtime" and command["operation"]["type"] == self.kind
+        try:
+            return self.original_request(encoded)
+        finally:
+            self.local.selected = False
+
+    def free(self, identity, result):
+        """
+        Return one native release failure for a proven success; all other identity/result pairs free normally.
+        对已证明成功返回一次原生释放失败；所有其他 identity/result 对正常释放。
+        """
+        if getattr(self.local, "selected", False):
+            envelope = json.loads(ctypes.string_at(result.ptr, result.len))
+            if envelope["status"] == "ok" and (self.kind != "host_requests_take" or envelope["result"]):
+                self.successes.append(envelope["result"])
+                if not self.failed.is_set():
+                    self.failed.set()
+                    return EmbeddedNativeStatus.INTERNAL
+        return self.original_free(identity, result)
+
+    def __enter__(self):
+        """
+        Install exact request/release interception and return this fault's observable evidence.
+        安装精确请求／释放拦截，并返回此故障的可观察证据。
+        """
+        self.transport._request_encoded = self.request
+        self.transport._result_free = self.free
+        return self
+
+    def __exit__(self, kind, error, traceback):
+        """
+        Restore both native adapters after the test body; preserve any kind/error/traceback by returning nothing.
+        测试主体结束后恢复两个原生适配器；无返回值以保留 kind/error/traceback。
+        """
+        self.transport._request_encoded = self.original_request
+        self.transport._result_free = self.original_free
 
 
 @unittest.skipUnless(os.environ.get("LUASKILLS_LIB"), "LUASKILLS_LIB is not configured")
@@ -416,6 +485,263 @@ class EmbeddedPumpIntegrationTests(EmbeddedNativeFixture, unittest.TestCase):
         self.terminal(operation)
         self.wait_for(lambda: self.pump.status["pending_commands"] == 0)
         self.assertFalse(self.pump._command_futures)
+
+    def test_mismatched_completion_evidence_keeps_the_original_request_owned(self):
+        """
+        Reject another request's completed status during recovery and preserve the actual unfinished acknowledgement.
+        恢复时拒绝其他请求的已完成状态，并保留实际未完成确认。
+        """
+        original_request = self.transport._request_encoded
+        failed = threading.Event()
+        corrupt = threading.Event()
+        corrupt.set()
+        calls = []
+
+        def request(encoded):
+            """
+            Reject one completion before entry, then substitute wrong status identity only during failed recovery.
+            在入场前拒绝一次完成，然后仅在失败恢复期间替换错误状态身份。
+            Return unchanged native results for every other command.
+            其他命令均返回未经更改的原生结果。
+            """
+            command = json.loads(encoded)["command"]
+            if command["type"] == "runtime":
+                kind = command["operation"]["type"]
+                if kind == "host_request_complete" and not failed.is_set():
+                    failed.set()
+                    raise EmbeddedTransportError("luaskills_ffi_embedded_request_v1", EmbeddedNativeStatus.CAPACITY_EXCEEDED)
+                result = original_request(encoded)
+                if kind == "host_request_status" and failed.is_set() and corrupt.is_set():
+                    result = dict(result, request_id="another-request", phase="completed")
+                return result
+            return original_request(encoded)
+
+        def handler(arguments, context):
+            """
+            Commit arguments once through context and return null; retries may only acknowledge this result.
+            通过 context 提交 arguments 一次并返回空值；重试只能确认此结果。
+            """
+            calls.append(arguments)
+            context.report_effects("committed")
+            return None
+
+        self.pump.register([self.capability(handler)], 5)
+        pool = self.callback_pool()
+        with patch.object(self.transport, "_request_encoded", side_effect=request):
+            operation = self.submit(pool, "identity-proof")
+            self.assertTrue(failed.wait(5))
+            self.wait_for(lambda: self.pump.recovery_required)
+            retained = self.pump.status["request_ids"]
+            try:
+                with self.assertRaisesRegex(RuntimeError, "mismatched identity"):
+                    self.pump.retry_acknowledgements(5)
+                self.assertEqual(self.pump.status["request_ids"], retained)
+                self.assertTrue(self.pump.recovery_required)
+            finally:
+                corrupt.clear()
+                self.pump.retry_acknowledgements(5)
+            self.pump.close(5)
+        done = self.terminal(operation)
+        self.assertEqual(calls, ["identity-proof"])
+        self.assertTrue(any(effect["request_id"] in retained and effect["effects"] == "committed"
+                            for effect in done["host_effects"]))
+
+    def test_rejected_registration_does_not_leave_an_uncertain_mutation(self):
+        """
+        Keep proven business rejection separate from lost delivery and allow the valid handler to drain normally.
+        区分已证明业务拒绝与丢失交付，并允许有效处理器正常排空。
+        """
+        capability = self.capability(lambda arguments, context: None)
+        with self.assertRaises(EmbeddedRuntimeError):
+            self.pump.register([], 5)
+        identity = self.pump.register([capability], 5)
+        with self.assertRaises(EmbeddedRuntimeError):
+            self.pump.register([capability], 5)
+        self.assertEqual(self.pump.status["registration_ids"], identity)
+        self.assertNotEqual(self.pump.status["pending_native_command"], "capabilities_register")
+        self.assertFalse(self.pump.recovery_required)
+        self.assertFalse(self.pump.status["closing"])
+
+    def test_missing_copied_receipt_preserves_owner_until_original_evidence_recovers(self):
+        """
+        Refuse replay when copied registration evidence is unavailable, then recover only the restored original bytes.
+        复制注册证据不可用时拒绝重放，然后仅从恢复的原始字节继续。
+        """
+        with PumpReleaseFault(self.transport, "capabilities_register") as fault:
+            with self.assertRaises(EmbeddedResultReleaseError) as caught:
+                self.pump.register([self.capability(lambda arguments, context: None)], 5)
+            original_bytes = caught.exception.response_bytes
+            try:
+                # Corrupt the test adapter's retained evidence without changing the already executed native mutation.
+                # 损坏测试适配器的保留证据，不改变已执行原生变更。
+                caught.exception._response_bytes = None
+                with self.assertRaisesRegex(RuntimeError, "no copied embedded response"):
+                    self.pump.retry_acknowledgements(5)
+                self.assertTrue(self.pump.recovery_required)
+                self.assertEqual(self.pump.status["pending_native_command"], fault.kind)
+                self.assertEqual(len(fault.successes), 1)
+                self.assertFalse(self.transport._results)
+                with self.assertRaises(TimeoutError):
+                    self.pump.close(0.01)
+            finally:
+                # Restore exact captured test evidence solely to prove recovery and release real fixture resources.
+                # 仅为证明恢复及释放真实夹具资源，恢复测试捕获的精确原始证据。
+                caught.exception._response_bytes = original_bytes
+                self.pump.retry_acknowledgements(5)
+                self.pump.close(5)
+            self.assertEqual(len(fault.successes), 1)
+
+    def test_register_release_failure_recovers_original_handler_ownership(self):
+        """
+        Recover successful registration from copied bytes without registering again or dropping its handler owner.
+        从复制字节恢复成功注册，不再次注册或丢弃其处理器所有者。
+        """
+        with PumpReleaseFault(self.transport, "capabilities_register") as fault:
+            with self.assertRaises(EmbeddedResultReleaseError):
+                self.pump.register([self.capability(lambda arguments, context: None)], 5)
+            self.assertTrue(self.pump.recovery_required)
+            self.assertEqual(self.pump.status["registration_ids"], ())
+            self.assertEqual(self.pump.status["pending_native_command"], fault.kind)
+            self.assertTrue(self.transport._results)
+            self.pump.retry_acknowledgements(5)
+            self.pump.close(5)
+            self.assertEqual(len(fault.successes), 1)
+            self.assertFalse(self.transport._results)
+            self.assertFalse(self.pump.recovery_required)
+
+    def test_take_release_failure_retains_batch_and_executes_handler_once(self):
+        """
+        Keep a delivered native request batch until copied receipt recovery, then execute its handler once.
+        保留已交付原生请求批次直到复制回执恢复，然后执行处理器一次。
+        """
+        calls = []
+
+        def handler(arguments, context):
+            """
+            Record arguments once and publish committed effects through context before returning null.
+            记录 arguments 一次，并在返回空值前通过 context 发布已提交副作用。
+            """
+            calls.append(arguments)
+            context.report_effects("committed")
+            return None
+
+        self.pump.register([self.capability(handler)], 5)
+        pool = self.callback_pool()
+        with PumpReleaseFault(self.transport, "host_requests_take") as fault:
+            operation = self.submit(pool, "delivered-once")
+            self.assertTrue(fault.failed.wait(5))
+            self.wait_for(lambda: self.pump.recovery_required)
+            self.assertEqual(calls, [])
+            self.assertEqual(self.pump.status["request_ids"], ())
+            self.assertTrue(self.transport._results)
+            self.pump.retry_acknowledgements(5)
+            self.pump.close(5)
+            done = self.terminal(operation)
+            self.assertEqual(calls, ["delivered-once"])
+            self.assertEqual(len(fault.successes), 1)
+            request = fault.successes[0][0]
+            self.assertTrue(any(effect["request_id"] == request["request_id"]
+                and effect["registration_id"] == request["registration_id"] and effect["effects"] == "committed"
+                for effect in done["host_effects"]))
+            self.assertFalse(self.pump.recovery_required)
+
+    def test_unregister_release_failure_never_repeats_native_retirement(self):
+        """
+        Preserve a successful retirement receipt until explicit recovery and dispatch unregister exactly once.
+        保留成功退役回执直到显式恢复，并精确分发注销一次。
+        """
+        identities = self.pump.register([self.capability(lambda arguments, context: None)], 5)
+        with PumpReleaseFault(self.transport, "capability_unregister") as fault:
+            with self.assertRaises(EmbeddedResultReleaseError):
+                self.pump.unregister(identities[0], 5)
+            self.assertTrue(self.pump.recovery_required)
+            with self.assertRaises(TimeoutError):
+                self.pump.close(0.01)
+            self.assertEqual(len(fault.successes), 1)
+            self.pump.retry_acknowledgements(5)
+            self.pump.close(5)
+            self.assertEqual(len(fault.successes), 1)
+            self.assertFalse(self.pump.recovery_required)
+
+    def test_forget_release_failure_recovers_removal_without_querying_missing_registration(self):
+        """
+        Recover a removed registration from its retained null receipt instead of polling missing native metadata.
+        从保留空回执恢复已移除注册，不轮询缺失原生元数据。
+        """
+        identities = self.pump.register([self.capability(lambda arguments, context: None)], 5)
+        with PumpReleaseFault(self.transport, "capability_forget") as fault:
+            self.pump.request_close()
+            self.assertTrue(fault.failed.wait(5))
+            self.wait_for(lambda: self.pump.recovery_required)
+            self.assertEqual(self.pump.status["registration_ids"], identities)
+            with self.assertRaises(TimeoutError):
+                self.pump.close(0.01)
+            self.pump.retry_acknowledgements(5)
+            self.pump.close(5)
+            self.assertEqual(len(fault.successes), 1)
+            self.assertEqual(self.pump.status["registration_ids"], ())
+            self.assertFalse(self.transport._results)
+
+    def test_recovery_has_one_reserved_attempt_when_unregister_commands_are_full(self):
+        """
+        Recover a failed completion with every ordinary command occupied, sharing one reserved recovery attempt.
+        在每个普通命令槽都被占用时恢复失败完成，共享一个预留恢复尝试。
+        """
+        entered = threading.Event()
+        release = threading.Event()
+        recovering = threading.Event()
+        resume = threading.Event()
+        self.addCleanup(release.set)
+        self.addCleanup(resume.set)
+        calls = []
+
+        def handler(arguments, context):
+            """
+            Hold arguments until release and report one committed mutation through context before returning.
+            保持 arguments 直到 release，并在返回前通过 context 报告一次已提交变更。
+            """
+            calls.append(arguments)
+            entered.set()
+            self.assertTrue(release.wait(5))
+            context.report_effects("committed")
+            return None
+
+        original_release = self.transport.release_results
+
+        def release_results():
+            """
+            Hold real buffer recovery until resume to expose concurrent observer admission; return after release.
+            保持真实缓冲恢复直到 resume 以暴露并发观察者入场；释放后返回。
+            """
+            recovering.set()
+            self.assertTrue(resume.wait(5))
+            original_release()
+
+        identity = self.pump.register([self.capability(handler)], 5)[0]
+        pool = self.callback_pool()
+        with PumpReleaseFault(self.transport, "host_request_complete") as fault:
+            self.submit(pool, "full-command-budget")
+            self.assertTrue(entered.wait(5))
+            waiters = [self.pump._submit(self.pump._unregister(identity), drain=True)
+                       for _ in range(self.pump_config.max_pending_commands)]
+            self.wait_for(lambda: self.pump.status["pending_commands"] == len(waiters))
+            release.set()
+            self.assertTrue(fault.failed.wait(5))
+            self.wait_for(lambda: self.pump.recovery_required)
+            with patch.object(self.transport, "release_results", side_effect=release_results):
+                first = self.pump._submit(self.pump._retry_acknowledgements(), drain=True, recovery=True)
+                self.assertTrue(recovering.wait(5))
+                second = self.pump._submit(self.pump._retry_acknowledgements(), drain=True, recovery=True)
+                self.assertIs(first, second)
+                self.assertEqual(self.pump.status["pending_commands"], len(waiters) + 1)
+                resume.set()
+                first.result(5)
+            for waiter in waiters:
+                waiter.result(5)
+            self.pump.close(5)
+            self.assertEqual(calls, ["full-command-budget"])
+            self.assertEqual(len(fault.successes), 1)
+            self.assertEqual(self.pump.status["pending_commands"], 0)
 
     def test_callback_cannot_wait_for_its_own_pump_to_drain(self):
         """
