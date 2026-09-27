@@ -28,7 +28,19 @@ EMBEDDED_CORE_VERSION = '0.5.9'
 
 # Generated contract metadata: EMBEDDED_CONTRACT_SHA256.
 # 生成的契约元数据：EMBEDDED_CONTRACT_SHA256。
-EMBEDDED_CONTRACT_SHA256 = '03674807fcd4ea0249915fd210eb5caeaa31e9ec6471feff1e3f39977876e9a1'
+EMBEDDED_CONTRACT_SHA256 = 'dce1e3c949f3c45042e3b3d75c452f28bb8694e5e004b55082e58b1be28e8a7f'
+
+# Generated contract metadata: EMBEDDED_DESCRIPTION_VERSION.
+# 生成的契约元数据：EMBEDDED_DESCRIPTION_VERSION。
+EMBEDDED_DESCRIPTION_VERSION = 1
+
+# Generated contract metadata: EMBEDDED_DESCRIPTION_MAX_BYTES.
+# 生成的契约元数据：EMBEDDED_DESCRIPTION_MAX_BYTES。
+EMBEDDED_DESCRIPTION_MAX_BYTES = 16384
+
+# Generated contract metadata: EMBEDDED_REQUIRED_CAPABILITIES.
+# 生成的契约元数据：EMBEDDED_REQUIRED_CAPABILITIES。
+EMBEDDED_REQUIRED_CAPABILITIES = ('bounded_transports_v1', 'plugin_budgets_v1', 'shared_pools_v1', 'dedicated_pools_v1', 'fixed_sessions_v1', 'host_request_queue_v1', 'in_memory_effect_evidence_v1', 'strict_json_v1')
 
 # Generated contract metadata: EMBEDDED_ROOT_COMMANDS.
 # 生成的契约元数据：EMBEDDED_ROOT_COMMANDS。
@@ -1993,6 +2005,80 @@ OutputCapabilityScope: TypeAlias = Literal['invocation', 'session']
 OutputEffectState: TypeAlias = Literal['not_started', 'not_applicable', 'committed', 'rolled_back', 'unknown']
 
 
+class OutputEmbeddedBuildIdentity(TypedDict, total=True):
+    """
+    Wire fields for OutputEmbeddedBuildIdentity; native validation enforces semantic constraints.
+    OutputEmbeddedBuildIdentity 的线字段；原生校验负责语义约束。
+    Selected package and compiler input identities; binary authentication remains the release artifact's job.
+    选定包及编译器输入身份；二进制认证仍由发布产物负责。
+    """
+    # Sorted Cargo feature environment suffixes; they are not reverse-mapped into guessed feature names.
+    # 排序后 Cargo 功能环境后缀；不反向映射为猜测功能名。
+    # Exact wire member cargo_features; required independently of nullability.
+    # 精确线成员 cargo_features；必需与是否可为空值相互独立。
+    cargo_features: List[str]
+    # Exact bundled embedded contract identity, independently checked by SDKs.
+    # 精确包内嵌入式契约身份，由 SDK 独立检查。
+    # Exact wire member contract_sha256; required independently of nullability.
+    # 精确线成员 contract_sha256；必需与是否可为空值相互独立。
+    contract_sha256: str
+    # Cargo's debug-information setting, independent of optimization.
+    # Cargo 调试信息设置，独立于优化。
+    # Exact wire member debug_info; required independently of nullability.
+    # 精确线成员 debug_info；必需与是否可为空值相互独立。
+    debug_info: str
+    # SHA-256 of the exact machine-readable selected-input report emitted by build.rs.
+    # build.rs 输出的精确机器可读选定输入报告的 SHA-256。
+    # Exact wire member inputs_sha256; required independently of nullability.
+    # 精确线成员 inputs_sha256；必需与是否可为空值相互独立。
+    inputs_sha256: str
+    # Actual Cargo optimization setting, not an inferred profile label.
+    # 实际 Cargo 优化设置，不推断配置名称。
+    # Exact wire member opt_level; required independently of nullability.
+    # 精确线成员 opt_level；必需与是否可为空值相互独立。
+    opt_level: str
+    # Bundled package lockfile identity; a consuming Rust workspace may resolve a different dependency graph.
+    # 包内锁文件身份；消费它的 Rust 工作区可能解析出不同依赖图。
+    # Exact wire member package_lock_sha256; required independently of nullability.
+    # 精确线成员 package_lock_sha256；必需与是否可为空值相互独立。
+    package_lock_sha256: str
+    # Cargo's target pointer width, preserved as its exact textual value.
+    # Cargo 目标指针位宽，保留其精确文本值。
+    # Exact wire member pointer_width; required independently of nullability.
+    # 精确线成员 pointer_width；必需与是否可为空值相互独立。
+    pointer_width: str
+    # The selected rustc executable's verbose version output.
+    # 所选 rustc 可执行文件的详细版本输出。
+    # Exact wire member rustc; required independently of nullability.
+    # 精确线成员 rustc；必需与是否可为空值相互独立。
+    rustc: str
+    # SHA-256 of Cargo's exact encoded additional compiler flags.
+    # Cargo 精确编码额外编译参数的 SHA-256。
+    # Exact wire member rustflags_sha256; required independently of nullability.
+    # 精确线成员 rustflags_sha256；必需与是否可为空值相互独立。
+    rustflags_sha256: str
+    # SHA-256 of sorted package-relative input paths and their exact content hashes.
+    # 排序后包相对输入路径及其精确内容摘要的 SHA-256。
+    # Exact wire member source_sha256; required independently of nullability.
+    # 精确线成员 source_sha256；必需与是否可为空值相互独立。
+    source_sha256: str
+    # Cargo's target triple for this build.
+    # 此构建的 Cargo 目标三元组。
+    # Exact wire member target; required independently of nullability.
+    # 精确线成员 target；必需与是否可为空值相互独立。
+    target: str
+    # Cargo's target architecture identity.
+    # Cargo 目标架构身份。
+    # Exact wire member target_arch; required independently of nullability.
+    # 精确线成员 target_arch；必需与是否可为空值相互独立。
+    target_arch: str
+    # Cargo's target operating-system identity.
+    # Cargo 目标操作系统身份。
+    # Exact wire member target_os; required independently of nullability.
+    # 精确线成员 target_os；必需与是否可为空值相互独立。
+    target_os: str
+
+
 class OutputEmbeddedError(TypedDict, total=True):
     """
     Wire fields for OutputEmbeddedError; native validation enforces semantic constraints.
@@ -2206,6 +2292,11 @@ class OutputEmbeddedSessionSnapshot(TypedDict, total=True):
 # Exact wire shape of OutputErrorStatus, derived from the packaged core schema.
 # 从包内核心 Schema 派生的 OutputErrorStatus 精确线形状。
 OutputErrorStatus: TypeAlias = Literal['error']
+
+
+# Exact wire shape of OutputExecutionBackend, derived from the packaged core schema.
+# 从包内核心 Schema 派生的 OutputExecutionBackend 精确线形状。
+OutputExecutionBackend: TypeAlias = Literal['in_process', 'worker_process']
 
 
 # Exact wire shape of OutputHostEffectPhase, derived from the packaged core schema.
@@ -2629,6 +2720,60 @@ class OutputTransportDescription(TypedDict, total=True):
     protocol_version: int
     # Runtime operations implemented by the exhaustive dispatcher.
     # 穷尽分发器实现的运行时操作。
+    # Exact wire member runtime_commands; required independently of nullability.
+    # 精确线成员 runtime_commands；必需与是否可为空值相互独立。
+    runtime_commands: List[str]
+
+
+class OutputCoreDescription(TypedDict, total=True):
+    """
+    Wire fields for OutputCoreDescription; native validation enforces semantic constraints.
+    OutputCoreDescription 的线字段；原生校验负责语义约束。
+    Immutable description of the exact linked core, usable without a transport or runtime.
+    精确链接核心的不可变描述，无需传输或运行时即可使用。
+    """
+    # Exact independent embedded ABI structure version.
+    # 精确独立嵌入式 ABI 结构版本。
+    # Exact wire member abi_structure_version; required independently of nullability.
+    # 精确线成员 abi_structure_version；必需与是否可为空值相互独立。
+    abi_structure_version: int
+    # Build input evidence; release manifests bind it to commits and signed artifact checksums separately.
+    # 构建输入证据；发布清单另将其关联到提交及签名产物摘要。
+    # Exact wire member build; required independently of nullability.
+    # 精确线成员 build；必需与是否可为空值相互独立。
+    build: 'OutputEmbeddedBuildIdentity'
+    # Implemented semantic features; a name does not grant host permissions.
+    # 已实现语义功能；名称不授予宿主权限。
+    # Exact wire member capabilities; required independently of nullability.
+    # 精确线成员 capabilities；必需与是否可为空值相互独立。
+    capabilities: List[str]
+    # Root command names shared with the exhaustive dispatcher.
+    # 与穷尽分发器共享的根命令名称。
+    # Exact wire member commands; required independently of nullability.
+    # 精确线成员 commands；必需与是否可为空值相互独立。
+    commands: List[str]
+    # Cargo package version of this exact core.
+    # 此精确核心的 Cargo 包版本。
+    # Exact wire member core_version; required independently of nullability.
+    # 精确线成员 core_version；必需与是否可为空值相互独立。
+    core_version: str
+    # Version of this independent descriptor format.
+    # 此独立描述格式的版本。
+    # Exact wire member description_version; required independently of nullability.
+    # 精确线成员 description_version；必需与是否可为空值相互独立。
+    description_version: int
+    # Actually implemented execution backends, excluding reserved unsupported variants.
+    # 实际已实现执行后端，不包含预留且不支持的取值。
+    # Exact wire member execution_backends; required independently of nullability.
+    # 精确线成员 execution_backends；必需与是否可为空值相互独立。
+    execution_backends: List['OutputExecutionBackend']
+    # Exact embedded JSON protocol version.
+    # 精确嵌入式 JSON 协议版本。
+    # Exact wire member protocol_version; required independently of nullability.
+    # 精确线成员 protocol_version；必需与是否可为空值相互独立。
+    protocol_version: int
+    # Nested command names shared with the exhaustive dispatcher.
+    # 与穷尽分发器共享的嵌套命令名称。
     # Exact wire member runtime_commands; required independently of nullability.
     # 精确线成员 runtime_commands；必需与是否可为空值相互独立。
     runtime_commands: List[str]
@@ -3452,4 +3597,4 @@ class OutputRuntimeSessionSubmitResponse(TypedDict, total=True):
 
 # Public generated type names; metadata remains directly importable by name.
 # 公开生成类型名；元数据仍可按名称直接导入。
-__all__ = ['JsonValue', 'EmbeddedNativeStatus', 'InputCapabilityDescriptor', 'InputCapabilityEffects', 'InputCapabilityExecution', 'InputCapabilityIdempotency', 'InputCapabilityScope', 'InputCommand', 'InputCommandDescribe', 'InputCommandRuntime', 'InputCommandRuntimeClose', 'InputCommandRuntimeFree', 'InputCommandRuntimeInitialize', 'InputCommandRuntimeReserve', 'InputCommandRuntimeStatus', 'InputEffectState', 'InputEmbeddedCall', 'InputEmbeddedError', 'InputEmbeddedErrorCode', 'InputEmbeddedPluginConfig', 'InputEmbeddedRuntimeConfig', 'InputExecutionBackend', 'InputHostCompletion', 'InputHostCompletionShape89b6ef9bf484', 'InputHostCompletionShapeb9f2ee658336', 'InputInstanceReuse', 'InputLuaEngineOptions', 'InputLuaInvocationContext', 'InputLuaRuntimeCapabilityOptions', 'InputLuaRuntimeDatabaseCallbackMode', 'InputLuaRuntimeDatabaseProviderMode', 'InputLuaRuntimeHostOptions', 'InputLuaRuntimeManagedRuntimeConfig', 'InputLuaRuntimeRunLuaPoolConfig', 'InputLuaRuntimeSpaceControllerOptions', 'InputLuaRuntimeSpaceControllerProcessMode', 'InputLuaVmPoolConfig', 'InputModuleDefinition', 'InputModuleExport', 'InputPluginPoolConfig', 'InputPoolKind', 'InputRequest', 'InputRuntimeClientInfo', 'InputRuntimeCommand', 'InputRuntimeCommandCallSubmit', 'InputRuntimeCommandCapabilitiesList', 'InputRuntimeCommandCapabilitiesRegister', 'InputRuntimeCommandCapabilityForget', 'InputRuntimeCommandCapabilityStatus', 'InputRuntimeCommandCapabilityUnregister', 'InputRuntimeCommandHostRequestComplete', 'InputRuntimeCommandHostRequestStatus', 'InputRuntimeCommandHostRequestsTake', 'InputRuntimeCommandOperationCancel', 'InputRuntimeCommandOperationForget', 'InputRuntimeCommandOperationStatus', 'InputRuntimeCommandOperationWait', 'InputRuntimeCommandPluginClose', 'InputRuntimeCommandPluginForget', 'InputRuntimeCommandPluginRegister', 'InputRuntimeCommandPluginStatus', 'InputRuntimeCommandPoolClose', 'InputRuntimeCommandPoolForget', 'InputRuntimeCommandPoolRegister', 'InputRuntimeCommandPoolRevokePermission', 'InputRuntimeCommandPoolStatus', 'InputRuntimeCommandSessionClose', 'InputRuntimeCommandSessionForget', 'InputRuntimeCommandSessionOpen', 'InputRuntimeCommandSessionStatus', 'InputRuntimeCommandSessionSubmit', 'InputRuntimeRequestContext', 'InputToolCacheConfig', 'OutputCapabilityCaller', 'OutputCapabilityDescriptor', 'OutputCapabilityEffects', 'OutputCapabilityExecution', 'OutputCapabilityIdempotency', 'OutputCapabilityRegistrationStatus', 'OutputCapabilityScope', 'OutputEffectState', 'OutputEmbeddedError', 'OutputEmbeddedErrorCode', 'OutputEmbeddedPluginConfig', 'OutputEmbeddedPluginSnapshot', 'OutputEmbeddedRuntimeUsage', 'OutputEmbeddedSessionPhase', 'OutputEmbeddedSessionSnapshot', 'OutputErrorResponse', 'OutputErrorStatus', 'OutputHostEffectPhase', 'OutputHostEffectRecord', 'OutputHostRequest', 'OutputHostRequestPhase', 'OutputHostRequestStatus', 'OutputInitializationPhase', 'OutputOperationPhase', 'OutputOperationReceipt', 'OutputOperationSnapshot', 'OutputPoolReceipt', 'OutputPoolUsage', 'OutputRegistrationReceipt', 'OutputRootDescribeResponse', 'OutputRootRuntimeCloseResponse', 'OutputRootRuntimeFreeResponse', 'OutputRootRuntimeInitializeResponse', 'OutputRootRuntimeReserveResponse', 'OutputRootRuntimeStatusResponse', 'OutputRuntimeCallSubmitResponse', 'OutputRuntimeCapabilitiesListResponse', 'OutputRuntimeCapabilitiesRegisterResponse', 'OutputRuntimeCapabilityForgetResponse', 'OutputRuntimeCapabilityStatusResponse', 'OutputRuntimeCapabilityUnregisterResponse', 'OutputRuntimeHostRequestCompleteResponse', 'OutputRuntimeHostRequestStatusResponse', 'OutputRuntimeHostRequestsTakeResponse', 'OutputRuntimeOperationCancelResponse', 'OutputRuntimeOperationForgetResponse', 'OutputRuntimeOperationStatusResponse', 'OutputRuntimeOperationWaitResponse', 'OutputRuntimePluginCloseResponse', 'OutputRuntimePluginForgetResponse', 'OutputRuntimePluginRegisterResponse', 'OutputRuntimePluginStatusResponse', 'OutputRuntimePoolCloseResponse', 'OutputRuntimePoolForgetResponse', 'OutputRuntimePoolRegisterResponse', 'OutputRuntimePoolRevokePermissionResponse', 'OutputRuntimePoolStatusResponse', 'OutputRuntimeReceipt', 'OutputRuntimeSessionCloseResponse', 'OutputRuntimeSessionForgetResponse', 'OutputRuntimeSessionOpenResponse', 'OutputRuntimeSessionStatusResponse', 'OutputRuntimeSessionSubmitResponse', 'OutputRuntimeSnapshot', 'OutputSessionReceipt', 'OutputSuccessStatus', 'OutputTransportConfig', 'OutputTransportDescription']
+__all__ = ['JsonValue', 'EmbeddedNativeStatus', 'InputCapabilityDescriptor', 'InputCapabilityEffects', 'InputCapabilityExecution', 'InputCapabilityIdempotency', 'InputCapabilityScope', 'InputCommand', 'InputCommandDescribe', 'InputCommandRuntime', 'InputCommandRuntimeClose', 'InputCommandRuntimeFree', 'InputCommandRuntimeInitialize', 'InputCommandRuntimeReserve', 'InputCommandRuntimeStatus', 'InputEffectState', 'InputEmbeddedCall', 'InputEmbeddedError', 'InputEmbeddedErrorCode', 'InputEmbeddedPluginConfig', 'InputEmbeddedRuntimeConfig', 'InputExecutionBackend', 'InputHostCompletion', 'InputHostCompletionShape89b6ef9bf484', 'InputHostCompletionShapeb9f2ee658336', 'InputInstanceReuse', 'InputLuaEngineOptions', 'InputLuaInvocationContext', 'InputLuaRuntimeCapabilityOptions', 'InputLuaRuntimeDatabaseCallbackMode', 'InputLuaRuntimeDatabaseProviderMode', 'InputLuaRuntimeHostOptions', 'InputLuaRuntimeManagedRuntimeConfig', 'InputLuaRuntimeRunLuaPoolConfig', 'InputLuaRuntimeSpaceControllerOptions', 'InputLuaRuntimeSpaceControllerProcessMode', 'InputLuaVmPoolConfig', 'InputModuleDefinition', 'InputModuleExport', 'InputPluginPoolConfig', 'InputPoolKind', 'InputRequest', 'InputRuntimeClientInfo', 'InputRuntimeCommand', 'InputRuntimeCommandCallSubmit', 'InputRuntimeCommandCapabilitiesList', 'InputRuntimeCommandCapabilitiesRegister', 'InputRuntimeCommandCapabilityForget', 'InputRuntimeCommandCapabilityStatus', 'InputRuntimeCommandCapabilityUnregister', 'InputRuntimeCommandHostRequestComplete', 'InputRuntimeCommandHostRequestStatus', 'InputRuntimeCommandHostRequestsTake', 'InputRuntimeCommandOperationCancel', 'InputRuntimeCommandOperationForget', 'InputRuntimeCommandOperationStatus', 'InputRuntimeCommandOperationWait', 'InputRuntimeCommandPluginClose', 'InputRuntimeCommandPluginForget', 'InputRuntimeCommandPluginRegister', 'InputRuntimeCommandPluginStatus', 'InputRuntimeCommandPoolClose', 'InputRuntimeCommandPoolForget', 'InputRuntimeCommandPoolRegister', 'InputRuntimeCommandPoolRevokePermission', 'InputRuntimeCommandPoolStatus', 'InputRuntimeCommandSessionClose', 'InputRuntimeCommandSessionForget', 'InputRuntimeCommandSessionOpen', 'InputRuntimeCommandSessionStatus', 'InputRuntimeCommandSessionSubmit', 'InputRuntimeRequestContext', 'InputToolCacheConfig', 'OutputCapabilityCaller', 'OutputCapabilityDescriptor', 'OutputCapabilityEffects', 'OutputCapabilityExecution', 'OutputCapabilityIdempotency', 'OutputCapabilityRegistrationStatus', 'OutputCapabilityScope', 'OutputCoreDescription', 'OutputEffectState', 'OutputEmbeddedBuildIdentity', 'OutputEmbeddedError', 'OutputEmbeddedErrorCode', 'OutputEmbeddedPluginConfig', 'OutputEmbeddedPluginSnapshot', 'OutputEmbeddedRuntimeUsage', 'OutputEmbeddedSessionPhase', 'OutputEmbeddedSessionSnapshot', 'OutputErrorResponse', 'OutputErrorStatus', 'OutputExecutionBackend', 'OutputHostEffectPhase', 'OutputHostEffectRecord', 'OutputHostRequest', 'OutputHostRequestPhase', 'OutputHostRequestStatus', 'OutputInitializationPhase', 'OutputOperationPhase', 'OutputOperationReceipt', 'OutputOperationSnapshot', 'OutputPoolReceipt', 'OutputPoolUsage', 'OutputRegistrationReceipt', 'OutputRootDescribeResponse', 'OutputRootRuntimeCloseResponse', 'OutputRootRuntimeFreeResponse', 'OutputRootRuntimeInitializeResponse', 'OutputRootRuntimeReserveResponse', 'OutputRootRuntimeStatusResponse', 'OutputRuntimeCallSubmitResponse', 'OutputRuntimeCapabilitiesListResponse', 'OutputRuntimeCapabilitiesRegisterResponse', 'OutputRuntimeCapabilityForgetResponse', 'OutputRuntimeCapabilityStatusResponse', 'OutputRuntimeCapabilityUnregisterResponse', 'OutputRuntimeHostRequestCompleteResponse', 'OutputRuntimeHostRequestStatusResponse', 'OutputRuntimeHostRequestsTakeResponse', 'OutputRuntimeOperationCancelResponse', 'OutputRuntimeOperationForgetResponse', 'OutputRuntimeOperationStatusResponse', 'OutputRuntimeOperationWaitResponse', 'OutputRuntimePluginCloseResponse', 'OutputRuntimePluginForgetResponse', 'OutputRuntimePluginRegisterResponse', 'OutputRuntimePluginStatusResponse', 'OutputRuntimePoolCloseResponse', 'OutputRuntimePoolForgetResponse', 'OutputRuntimePoolRegisterResponse', 'OutputRuntimePoolRevokePermissionResponse', 'OutputRuntimePoolStatusResponse', 'OutputRuntimeReceipt', 'OutputRuntimeSessionCloseResponse', 'OutputRuntimeSessionForgetResponse', 'OutputRuntimeSessionOpenResponse', 'OutputRuntimeSessionStatusResponse', 'OutputRuntimeSessionSubmitResponse', 'OutputRuntimeSnapshot', 'OutputSessionReceipt', 'OutputSuccessStatus', 'OutputTransportConfig', 'OutputTransportDescription']

@@ -24,6 +24,7 @@ PACKAGE_ARTIFACTS = (
     "luaskills/embedded_driver.py",
     "luaskills/embedded_transport.py",
     "luaskills/embedded_json.py",
+    "luaskills/embedded_compatibility.py",
     "luaskills/embedded_pump.py",
     "luaskills/embedded_callbacks.py",
     "luaskills/embedded_contract.py",
@@ -62,10 +63,13 @@ sys.path.insert(0, sys.argv[1])
 from luaskills import embedded_contract as contract
 from luaskills import embedded_client as client
 from luaskills import embedded_scope as scope
+from luaskills import embedded_compatibility as compatibility
 import luaskills
 assert contract.__file__.startswith(sys.argv[1])
 assert client.__file__.startswith(sys.argv[1])
 assert scope.__file__.startswith(sys.argv[1])
+assert compatibility.__file__.startswith(sys.argv[1])
+assert luaskills.EmbeddedCompatibilityError is compatibility.EmbeddedCompatibilityError
 # Resolve imported recursive aliases in their defining contract namespace, as required by typing on Python 3.10.
 # 按 Python 3.10 typing 的要求，在定义契约命名空间解析导入的递归别名。
 for declaration in (client.EmbeddedClient, client.EmbeddedPending, client.EmbeddedRuntime, client.EmbeddedPlugin,
@@ -95,6 +99,11 @@ for name in contract.__all__:
     vector_probe = "import runpy, sys; sys.path.insert(0, sys.argv[1]); suite = sys.argv[2]; sys.argv = [suite]; runpy.run_path(suite, run_name='__main__')"
     subprocess.run([sys.executable, "-I", "-c", vector_probe, str(path.resolve()),
         str(ROOT / "tests/test_embedded_json_vectors.py")], check=True)
+    # Run native admission fault cases against the selected wheel; an explicit DLL also enables real integration.
+    # 对选定 wheel 执行原生入场故障用例；显式 DLL 同时启用实际集成验证。
+    compatibility_probe = "import sys, unittest; sys.path.insert(0, sys.argv[1]); suite = unittest.defaultTestLoader.discover(sys.argv[2], pattern='test_embedded_compatibility.py'); result = unittest.TextTestRunner(verbosity=2).run(suite); sys.exit(not result.wasSuccessful())"
+    subprocess.run([sys.executable, "-I", "-c", compatibility_probe, str(path.resolve()),
+        str(ROOT / "tests")], check=True)
 
 
 def verify_sdist(path: Path) -> None:
@@ -116,7 +125,7 @@ def verify_sdist(path: Path) -> None:
         prefix = next(iter(roots)) + "/"
         # Only these verified files are materialized; tar names never become destination filesystem paths.
         # 只落盘这些经验证文件；tar 名称绝不成为目标文件系统路径。
-        artifacts = ["scripts/generate_embedded_contract.py", "scripts/verify_embedded_distribution.py", "tests/test_embedded_json_vectors.py", *("src/" + name for name in PACKAGE_ARTIFACTS)]
+        artifacts = ["scripts/generate_embedded_contract.py", "scripts/verify_embedded_distribution.py", "tests/test_embedded_json_vectors.py", "tests/test_embedded_compatibility.py", "tests/test_embedded_transport.py", *("src/" + name for name in PACKAGE_ARTIFACTS)]
         destination = Path(temporary)
         for name in artifacts:
             member = archive.getmember(prefix + name)

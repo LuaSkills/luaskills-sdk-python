@@ -16,6 +16,35 @@ from unittest.mock import patch
 
 from luaskills import EmbeddedRuntimeError, EmbeddedTransport, EmbeddedTransportConfig, EmbeddedTransportError
 from luaskills.embedded_transport import _NativeConfig, _NativeResult
+from luaskills import embedded_contract as contract
+from luaskills.ffi import FfiBorrowedBuffer
+
+
+def core_description():
+    """
+    Return explicitly synthetic valid metadata for native-boundary fault injection.
+    返回明确为合成的有效元数据，用于原生边界故障注入。
+    """
+    return {
+        "description_version": contract.EMBEDDED_DESCRIPTION_VERSION,
+        "core_version": contract.EMBEDDED_CORE_VERSION,
+        "protocol_version": contract.EMBEDDED_PROTOCOL_VERSION,
+        "abi_structure_version": contract.EMBEDDED_PROTOCOL_VERSION,
+        "commands": list(contract.EMBEDDED_ROOT_COMMANDS),
+        "runtime_commands": list(contract.EMBEDDED_RUNTIME_COMMANDS),
+        "capabilities": list(contract.EMBEDDED_REQUIRED_CAPABILITIES),
+        "execution_backends": ["in_process"],
+        "build": {
+            "inputs_sha256": "a" * 64, "source_sha256": "b" * 64,
+            "contract_sha256": contract.EMBEDDED_CONTRACT_SHA256,
+            "package_lock_sha256": "c" * 64, "rustflags_sha256": "d" * 64,
+            "target": "synthetic-test-target", "target_arch": "synthetic-test-arch",
+            "target_os": {"win32": "windows", "linux": "linux", "darwin": "macos"}[sys.platform],
+            "pointer_width": str(ctypes.sizeof(ctypes.c_void_p) * 8),
+            "opt_level": "0", "debug_info": "true", "rustc": "synthetic test compiler",
+            "cargo_features": [],
+        },
+    }
 
 
 def config() -> EmbeddedTransportConfig:
@@ -75,17 +104,38 @@ class NativeLibrary:
         self.proceed.set()
         self.closed = False
         self.freed = False
+        # Library-owned metadata uses separate storage and must never enter owned-result release.
+        # 动态库拥有的元数据使用独立存储，绝不能进入拥有型结果释放。
+        self.description_bytes = json.dumps(core_description()).encode("utf-8")
+        self.description_storage = None
+        self.description_status = 0
+        self.description_length = None
+        self.description_null = False
+        self.constructor_calls = 0
+        self.luaskills_ffi_embedded_describe_v1 = NativeFunction(self.describe)
         self.luaskills_ffi_embedded_transport_new_v1 = NativeFunction(self.new)
         self.luaskills_ffi_embedded_transport_close_v1 = NativeFunction(self.close)
         self.luaskills_ffi_embedded_transport_free_v1 = NativeFunction(self.free)
         self.luaskills_ffi_embedded_result_free_v1 = NativeFunction(self.result_free)
         self.luaskills_ffi_embedded_request_v1 = NativeFunction(self.request)
 
+    def describe(self, output):
+        """
+        Publish separate library-owned metadata, allowing invalid lengths and null pointers for bounded-copy tests.
+        发布独立动态库元数据，允许无效长度及空指针以测试有界复制。
+        """
+        self.description_storage = (ctypes.c_uint8 * len(self.description_bytes)).from_buffer_copy(self.description_bytes)
+        borrowed = ctypes.cast(output, ctypes.POINTER(FfiBorrowedBuffer)).contents
+        borrowed.ptr = None if self.description_null else ctypes.cast(self.description_storage, ctypes.POINTER(ctypes.c_uint8))
+        borrowed.len = len(self.description_bytes) if self.description_length is None else self.description_length
+        return self.description_status
+
     def new(self, config_pointer, output):
         """
         Validate real ctypes structure layout and write the full native identity.
         校验实际 ctypes 结构布局，并写入完整原生身份。
         """
+        self.constructor_calls += 1
         native = ctypes.cast(config_pointer, ctypes.POINTER(_NativeConfig)).contents
         assert native.struct_size == ctypes.sizeof(_NativeConfig)
         assert native.protocol_version == 1

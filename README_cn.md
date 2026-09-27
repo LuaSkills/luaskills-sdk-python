@@ -389,7 +389,9 @@ finally:
 
 嵌入式请求接受对象键为字符串的内置 JSON 值。在原生提交前拒绝元组、自定义嵌套容器、键强制转换、循环、非有限数、越界整数和不成对 Unicode 代理。响应解码拒绝解码后重复键，保留负零、整数值浮点数、完整整数位和显式空值。畸形响应仍遵守传输的拥有型结果释放协议。此严格编码器作用于新嵌入式接口；旧 JSON FFI 的行为保持原样。
 
-`EmbeddedTransport` 绑定五个版本一嵌入式 C 入口。此开发接口要求使用导出这些符号的匹配本地核心构建；已有 0.5.7 发布资产不提供该接口。版本提升和已发布资产对齐在发布冻结阶段完成。
+`EmbeddedTransport` 绑定五个传输入口及只读引导入口 `luaskills_ffi_embedded_describe_v1`。此开发接口要求使用导出这些符号的匹配本地核心构建；已有 0.5.7 发布资产不提供该接口。版本提升和已发布资产对齐在发布冻结阶段完成。
+
+构造函数在分配传输前检查精确生成的核心版本、JSON／ABI 版本、描述版本、契约 SHA-256、必需命令及能力、进程内后端、操作系统和解释器指针位宽。原生加载器负责机器指令兼容。缺少引导符号或元数据不兼容时抛出 `EmbeddedCompatibilityError`；原生引导状态失败保留 `EmbeddedTransportError`。不回退旧核心。元数据按核心拥有的上限复制，全程保留动态库，绝不调用任何结果释放函数。`transport.core_description` 返回独立的生成类型 `OutputCoreDescription` 快照，包含构建输入证据。这些摘要描述选定源码及编译器输入，不认证二进制，也不替代发布产物校验；Rust 消费工作区可能采用不同于报告中包内锁文件的依赖图。
 
 显式提供 `EmbeddedTransportConfig`，并使用既有 `library_path` 或 `runtime_root` 选择方式。`request(command)` 接收根命令并返回成功的 `result`，其中显式 JSON 空值返回 `None`。原生返回码通过带 `status` 的 `EmbeddedTransportError` 报告；已交付核心失败通过带 `code`、`message` 的 `EmbeddedRuntimeError` 报告。绑定保留身份全部 64 位；解码失败或 Python 在原生返回时抛出中断，仍会释放已返回结果。
 

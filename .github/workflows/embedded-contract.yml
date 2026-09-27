@@ -28,7 +28,7 @@ jobs:
       - name: Verify exact offline generation
         run: python scripts/generate_embedded_contract.py --check
       - name: Check generated and typed embedded APIs against minimum Python
-        run: python -m mypy --strict --follow-imports=skip --python-version 3.10 src/luaskills/embedded_contract.py src/luaskills/embedded_json.py src/luaskills/embedded_driver.py src/luaskills/embedded_client.py src/luaskills/embedded_scope.py
+        run: python -m mypy --strict --follow-imports=skip --python-version 3.10 src/luaskills/embedded_contract.py src/luaskills/embedded_json.py src/luaskills/embedded_compatibility.py src/luaskills/embedded_transport.py src/luaskills/embedded_driver.py src/luaskills/embedded_client.py src/luaskills/embedded_scope.py
       - name: Exercise offline embedded behavior (native suites require the separate library matrix)
         env:
           PYTHONPATH: src

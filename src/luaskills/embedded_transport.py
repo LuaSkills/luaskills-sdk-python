@@ -12,7 +12,8 @@ import threading
 from dataclasses import dataclass, fields
 from typing import Any, Mapping
 
-from .embedded_contract import EMBEDDED_PROTOCOL_VERSION, EmbeddedNativeStatus
+from .embedded_contract import EMBEDDED_DESCRIPTION_MAX_BYTES, EMBEDDED_PROTOCOL_VERSION, EmbeddedNativeStatus, OutputCoreDescription
+from .embedded_compatibility import EmbeddedCompatibilityError, decode_core_description
 from .embedded_json import decode_embedded_json, encode_embedded_json
 from .ffi import FfiBorrowedBuffer, resolve_library_path
 
@@ -226,6 +227,9 @@ class EmbeddedTransport:
         # None only after actual native free has succeeded.
         # 仅在实际原生释放成功后为 None。
         self._transport_id: int | None = None
+        # Copy and validate borrowed metadata before the first constructor can publish a native handle.
+        # 在首个构造函数可能发布原生句柄前，复制并校验借用元数据。
+        self._description_bytes = self._read_description()
         self._bind()
         # Prefix and field widths follow the native header rather than Python object size.
         # 前缀与字段位宽遵循原生头文件，而非 Python 对象大小。
@@ -239,6 +243,39 @@ class EmbeddedTransport:
         identity = ctypes.c_uint64()
         self._check("luaskills_ffi_embedded_transport_new_v1", self._new(ctypes.byref(native_config), ctypes.byref(identity)))
         self._transport_id = identity.value
+
+    @property
+    def core_description(self) -> OutputCoreDescription:
+        """
+        Return an independent validated snapshot of the exact loaded core, without a native request.
+        返回精确已加载核心的独立已校验快照，不发起原生请求。
+        """
+        return decode_core_description(self._description_bytes)
+
+    def _read_description(self) -> bytes:
+        """
+        Bind the required bootstrap symbol and copy bounded library-owned bytes without freeing them.
+        绑定必需引导符号，复制有界且由动态库拥有的字节，绝不释放它们。
+        Missing symbols, invalid buffers or incompatible metadata fail before native ownership exists.
+        缺少符号、无效缓冲或不兼容元数据在原生所有权存在前失败。
+        """
+        try:
+            # This read-only function requires no transport identity and returns no caller-owned result.
+            # 此只读函数无需传输身份，也不返回调用方拥有的结果。
+            describe = self._library.luaskills_ffi_embedded_describe_v1
+        except AttributeError as error:
+            raise EmbeddedCompatibilityError("native core lacks luaskills_ffi_embedded_describe_v1") from error
+        describe.argtypes = [ctypes.POINTER(FfiBorrowedBuffer)]
+        describe.restype = ctypes.c_int32
+        # The CDLL owner remains strongly retained throughout this call and the subsequent copy.
+        # 在此调用及后续复制全过程中，CDLL 所有者始终被强引用保留。
+        borrowed = FfiBorrowedBuffer()
+        self._check("luaskills_ffi_embedded_describe_v1", describe(ctypes.byref(borrowed)))
+        if not borrowed.ptr or not 0 < borrowed.len <= EMBEDDED_DESCRIPTION_MAX_BYTES:
+            raise EmbeddedCompatibilityError("invalid native core description buffer")
+        encoded = ctypes.string_at(borrowed.ptr, borrowed.len)
+        decode_core_description(encoded)
+        return encoded
 
     @property
     def config(self) -> EmbeddedTransportConfig:

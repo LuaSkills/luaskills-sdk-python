@@ -57,6 +57,10 @@ class EmbeddedContractTests(unittest.TestCase):
         self.assertEqual(contract.EMBEDDED_CONTRACT_SHA256, hashlib.sha256(self.encoded).hexdigest())
         self.assertEqual(contract.EMBEDDED_PROTOCOL_VERSION, self.document["protocol_version"])
         self.assertEqual(contract.EMBEDDED_CORE_VERSION, self.document["core_version"])
+        self.assertEqual(contract.EMBEDDED_DESCRIPTION_VERSION, self.document["compatibility"]["description_version"])
+        self.assertEqual(contract.EMBEDDED_DESCRIPTION_MAX_BYTES, self.document["compatibility"]["max_description_bytes"])
+        self.assertEqual(list(contract.EMBEDDED_REQUIRED_CAPABILITIES), self.document["compatibility"]["required_capabilities"])
+        self.assertEqual(contract.OutputCoreDescription.__required_keys__, set(self.document["core_description"]["required"]))
         self.assertEqual(dict((item.name.lower(), item.value) for item in EmbeddedNativeStatus), self.document["native_status"])
         self.assertEqual(set(typing.get_args(EffectState)), {
             variant["const"] for variant in self.document["request"]["$defs"]["EffectState"]["oneOf"]
@@ -99,7 +103,7 @@ class EmbeddedContractTests(unittest.TestCase):
         # Each output root stays independently rooted even when equal definitions share generated declarations.
         # 即使相等定义共享生成声明，各输出根也保持独立。
         roots = [("Input", self.document["request"])] + [
-            ("Output", root) for root in [self.document["error_response"], *self.document["root_responses"].values(), *self.document["runtime_responses"].values()]
+            ("Output", root) for root in [self.document["core_description"], self.document["error_response"], *self.document["root_responses"].values(), *self.document["runtime_responses"].values()]
         ]
         for prefix, root in roots:
             for name, schema in root.get("$defs", {}).items():

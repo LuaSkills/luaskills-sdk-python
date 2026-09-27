@@ -39,6 +39,7 @@ from .embedded_transport import (
     EmbeddedTransportConfig,
     EmbeddedTransportError,
 )
+from .embedded_compatibility import EmbeddedCompatibilityError
 from .embedded_callbacks import EffectState, HostCallbackContext, HostCapability
 from .embedded_pump import CallbackPumpConfig, EmbeddedCallbackPump
 from .embedded_contract import EmbeddedNativeStatus
@@ -152,6 +153,7 @@ __all__ = [
     "EmbeddedTransport",
     "EmbeddedTransportConfig",
     "EmbeddedTransportError",
+    "EmbeddedCompatibilityError",
     "HostCallbackContext",
     "HostCapability",
     "HostToolJsonAction",

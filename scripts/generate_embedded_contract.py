@@ -355,9 +355,18 @@ def generate(document: dict[str, Any], encoded: bytes) -> bytes:
         raise ValueError("root response coverage differs from the core command list")
     if set(document["runtime_responses"]) != set(document["runtime_commands"]):
         raise ValueError("runtime response coverage differs from the core command list")
+    # Descriptor limits and requirements are generated evidence, never an SDK-side guessed capability list.
+    # 描述边界及要求属于生成证据，绝不是 SDK 侧猜测能力列表。
+    compatibility = document["compatibility"]
+    if type(compatibility["description_version"]) is not int or compatibility["description_version"] != 1 or type(compatibility["max_description_bytes"]) is not int or compatibility["max_description_bytes"] <= 0:
+        raise ValueError("unsupported embedded compatibility descriptor metadata")
+    capabilities = compatibility["required_capabilities"]
+    if not isinstance(capabilities, list) or not capabilities or any(type(name) is not str or not name for name in capabilities) or len(set(capabilities)) != len(capabilities):
+        raise ValueError("invalid embedded compatibility capability inventory")
     # Identically named output definitions are merged only after structural equality is proven.
     # 同名输出定义仅在已证明结构相等后合并。
-    output_roots = {"OutputErrorResponse": document["error_response"]}
+    output_roots = {"OutputErrorResponse": document["error_response"],
+        "OutputCoreDescription": document["core_description"]}
     output_roots.update({"OutputRoot" + identifier(name) + "Response": schema for name, schema in document["root_responses"].items()})
     output_roots.update({"OutputRuntime" + identifier(name) + "Response": schema for name, schema in document["runtime_responses"].items()})
     for root in [document["request"], *output_roots.values()]:
@@ -401,6 +410,9 @@ def generate(document: dict[str, Any], encoded: bytes) -> bytes:
         "EMBEDDED_CONTRACT_VERSION": document["contract_version"],
         "EMBEDDED_CORE_VERSION": document["core_version"],
         "EMBEDDED_CONTRACT_SHA256": hashlib.sha256(encoded).hexdigest(),
+        "EMBEDDED_DESCRIPTION_VERSION": document["compatibility"]["description_version"],
+        "EMBEDDED_DESCRIPTION_MAX_BYTES": document["compatibility"]["max_description_bytes"],
+        "EMBEDDED_REQUIRED_CAPABILITIES": tuple(document["compatibility"]["required_capabilities"]),
         "EMBEDDED_ROOT_COMMANDS": tuple(document["commands"]),
         "EMBEDDED_RUNTIME_COMMANDS": tuple(document["runtime_commands"]),
     }.items():
