@@ -17,6 +17,11 @@ from .embedded_contract import EMBEDDED_PROTOCOL_VERSION, EmbeddedNativeStatus
 from .ffi import FfiBorrowedBuffer, resolve_library_path
 
 
+# Each SDK control executor has one worker; ownership admission reserves the same native frame capacity.
+# 每个 SDK 控制执行器拥有一个工作线程；所有权入场预留相同原生帧容量。
+EMBEDDED_CONTROL_WORKERS = 1
+
+
 class EmbeddedTransportError(RuntimeError):
     """
     Preserve the native function name and integer status for a failed transport operation.
@@ -54,6 +59,48 @@ class EmbeddedRuntimeError(RuntimeError):
         # Exact diagnostic supplied by the native core.
         # 原生核心提供的精确诊断。
         self.message = message
+
+
+class EmbeddedResultReleaseError(EmbeddedTransportError):
+    """
+    Preserve an already copied native response when releasing its owned buffer fails.
+    当释放拥有型缓冲失败时，保留已经复制的原生响应。
+    This error never authorizes replaying the command: a resource or external effect may already exist.
+    此错误绝不授权重放命令：资源或外部副作用可能已经存在。
+    """
+
+    def __init__(self, status: int, response_bytes: bytes | None) -> None:
+        """
+        Retain exact release status and any response bytes copied before the failed release.
+        保留精确释放状态及释放失败前已复制的任何响应字节。
+        Return an error whose delivery evidence survives explicit later buffer-release recovery.
+        返回在后续显式缓冲释放恢复后仍保留交付证据的错误。
+        """
+        super().__init__("luaskills_ffi_embedded_result_free_v1", status)
+        # None means no response was copied; an empty response is distinct and remains a decoding failure.
+        # None 表示未复制响应；空响应与其不同，仍属于解码失败。
+        self._response_bytes = response_bytes
+
+    @property
+    def response_bytes(self) -> bytes | None:
+        """
+        Return immutable copied bytes, independently of the original native buffer's current lifetime.
+        返回不可变复制字节，独立于原始原生缓冲的当前寿命。
+        None reports missing evidence; callers must not infer command rejection from missing evidence.
+        None 表示缺少证据；调用方不得据此推断命令已被拒绝。
+        """
+        return self._response_bytes
+
+    def delivered_result(self) -> Any:
+        """
+        Decode the copied response with the transport's normal envelope and business-error rules.
+        使用传输的正常信封及业务错误规则解码已复制响应。
+        Return the original successful result, or raise its business/parse error without issuing native work.
+        返回原始成功结果，或抛出其业务／解析错误，不发起原生工作。
+        """
+        if self._response_bytes is None:
+            raise RuntimeError("no copied embedded response is available")
+        return EmbeddedTransport._decode(self._response_bytes.decode("utf-8"))
         super().__init__(f"{code}: {message}")
 
 
@@ -154,7 +201,7 @@ class EmbeddedTransport:
         self._library = ctypes.CDLL(str(self.library_path))
         # Immutable caller budgets govern this transport's native admission.
         # 不可变调用方预算治理此传输的原生入场。
-        self.config = config
+        self._config = config
         # Short local ownership lock; never held while executing a runtime request.
         # 局部所有权短锁；执行运行时请求时绝不持有。
         self._lock = threading.Lock()
@@ -167,6 +214,12 @@ class EmbeddedTransport:
         # Exact callback pump owners prevent duplicate consumption and transport release between polling calls.
         # 精确回调泵所有者阻止重复消费及轮询调用间隙中的传输释放。
         self._callback_pumps: dict[str, object] = {}
+        # One bounded command driver retains this transport until all of its native workers actually return.
+        # 一个有界命令驱动器保留此传输，直到其全部原生工作线程实际返回。
+        self._command_driver: object | None = None
+        # Command executor slots reserved independently of callback pump executors.
+        # 独立于回调泵执行器预留的命令执行器槽。
+        self._command_slots = 0
         # None only after actual native free has succeeded.
         # 仅在实际原生释放成功后为 None。
         self._transport_id: int | None = None
@@ -183,6 +236,16 @@ class EmbeddedTransport:
         identity = ctypes.c_uint64()
         self._check("luaskills_ffi_embedded_transport_new_v1", self._new(ctypes.byref(native_config), ctypes.byref(identity)))
         self._transport_id = identity.value
+
+    @property
+    def config(self) -> EmbeddedTransportConfig:
+        """
+        Return the immutable original native budgets used by SDK admission and request encoding.
+        返回 SDK 入场及请求编码使用的不可变原始原生预算。
+        No setter may let Python-side limits drift from the already-created native transport.
+        不提供能使 Python 端限制偏离已创建原生传输的设置入口。
+        """
+        return self._config
 
     def _bind(self) -> None:
         """
@@ -279,27 +342,28 @@ class EmbeddedTransport:
 
     def _request_encoded(self, encoded: bytes) -> Any:
         """
-        Execute already-owned command bytes and release exact native output even if decoding or Python return is interrupted.
-        执行已拥有命令字节；即使解码或 Python 返回被中断，也释放精确原生输出。
+        Execute owned command bytes and retain delivery evidence if exact native output release fails.
+        执行拥有型命令字节，并在精确原生输出释放失败时保留交付证据。
+        Return the decoded result; errors retain native ownership until explicit release recovery.
+        返回解码结果；错误保留原生所有权，直到显式释放恢复。
         """
         if len(encoded) > self.config.max_request_bytes:
             raise ValueError("embedded request exceeds max_request_bytes")
         # Backing bytes stay alive until the synchronous native call has returned.
         # 后备字节保持存活，直到同步原生调用返回。
         storage = (ctypes.c_uint8 * len(encoded)).from_buffer_copy(encoded)
-        # Each invocation owns one independently zeroed descriptor.
-        # 每次调用拥有一个独立清零的描述符。
+        # Each invocation owns one independently zeroed descriptor and an optional immutable response copy.
+        # 每次调用拥有一个独立清零的描述符及可选不可变响应副本。
         result = _NativeResult()
+        response_bytes: bytes | None = None
         # Local call ownership extends through parsing and release.
         # 局部调用所有权延续到解析及释放完成。
         identity = self._begin()
         try:
             self._check("luaskills_ffi_embedded_request_v1", self._request(
                 identity, FfiBorrowedBuffer(storage, len(encoded)), ctypes.byref(result)))
-            # Copy by explicit length to preserve embedded NUL and Unicode.
-            # 按显式长度复制，保留嵌入空字符及 Unicode。
-            text = ctypes.string_at(result.ptr, result.len).decode("utf-8")
-            return self._decode(text)
+            response_bytes = ctypes.string_at(result.ptr, result.len)
+            return self._decode(response_bytes.decode("utf-8"))
         finally:
             try:
                 # Native publication may finish before a Python interruption is raised on return.
@@ -307,11 +371,14 @@ class EmbeddedTransport:
                 if result.allocation_id != 0:
                     with self._lock:
                         self._results[result.allocation_id] = result
-                    self._check("luaskills_ffi_embedded_result_free_v1", self._result_free(identity, result))
+                    status = self._result_free(identity, result)
+                    if status != EmbeddedNativeStatus.OK:
+                        raise EmbeddedResultReleaseError(status, response_bytes)
                     with self._lock:
                         del self._results[result.allocation_id]
             finally:
                 self._end()
+
 
     def close(self) -> None:
         """
@@ -348,7 +415,7 @@ class EmbeddedTransport:
         with self._lock:
             if self._transport_id is None:
                 raise RuntimeError("embedded transport has been freed")
-            if self._active_calls or self._results or self._callback_pumps:
+            if self._active_calls or self._results or self._callback_pumps or self._command_driver is not None:
                 raise RuntimeError("embedded transport still owns active calls or results")
             self._check("luaskills_ffi_embedded_transport_free_v1", self._free(self._transport_id))
             self._transport_id = None
@@ -365,7 +432,50 @@ class EmbeddedTransport:
                 raise RuntimeError("embedded runtime already has a Python callback pump")
             if len(self._callback_pumps) >= self.config.max_runtimes:
                 raise RuntimeError("callback pump ownership exceeds transport runtime capacity")
+            self._check_worker_reservation(self._command_slots + (len(self._callback_pumps) + 1) * EMBEDDED_CONTROL_WORKERS)
             self._callback_pumps[runtime_id] = owner
+
+    def _claim_command_driver(self, owner: object, native_slots: int) -> None:
+        """
+        Retain one driver owner and its native_slots before it can enqueue or execute native work.
+        在驱动器能够排队或执行原生工作前，保留一个驱动器所有者及其 native_slots。
+        Return nothing; duplicate ownership and use after native free fail explicitly.
+        无返回值；重复所有权及原生释放后使用明确失败。
+        """
+        with self._lock:
+            if self._transport_id is None:
+                raise RuntimeError("embedded transport has been freed")
+            if self._command_driver is not None:
+                raise RuntimeError("embedded transport already has a command driver")
+            self._check_worker_reservation(native_slots + len(self._callback_pumps) * EMBEDDED_CONTROL_WORKERS)
+            self._command_driver = owner
+            self._command_slots = native_slots
+
+    def _release_command_driver(self, owner: object) -> None:
+        """
+        Release the exact driver owner after both native executors have joined, retaining other owners.
+        在两个原生执行器均汇合后释放精确驱动器所有者，保留其他所有者。
+        Return nothing; a mismatched owner cannot change transport lifetime.
+        无返回值；不匹配的所有者无法改变传输寿命。
+        """
+        with self._lock:
+            if self._command_driver is not owner:
+                raise RuntimeError("embedded command driver ownership identity does not match")
+            self._command_driver = None
+            self._command_slots = 0
+
+    def _check_worker_reservation(self, slots: int) -> None:
+        """
+        Check worst-case native frame reservations for slots while the local ownership lock is held.
+        持有局部所有权锁时，为 slots 检查最坏情况原生帧预留。
+        Return nothing; insufficient count or aggregate response bytes fail before publishing an SDK owner.
+        无返回值；数量或聚合响应字节不足时，在发布 SDK 所有者前失败。
+        """
+        # Core admission reserves max_response_bytes before dispatch, not the eventual small receipt size.
+        # 核心在分发前预留 max_response_bytes，而非最终较小的回执大小。
+        required_bytes = slots * self.config.max_response_bytes
+        if slots > self.config.max_result_buffers or required_bytes > self.config.max_result_bytes:
+            raise EmbeddedRuntimeError("capacity_exceeded", f"transport needs {slots} result slots and {required_bytes} result bytes for SDK workers")
 
     def _release_callback_pump(self, runtime_id: str, owner: object) -> None:
         """

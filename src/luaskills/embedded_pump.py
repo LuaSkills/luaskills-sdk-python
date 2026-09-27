@@ -17,7 +17,7 @@ from typing import Any, Coroutine, Iterable
 
 from .embedded_callbacks import HOST_CALLBACK_RUNTIME, HostCallbackContext, HostCapability
 from .embedded_contract import EmbeddedNativeStatus
-from .embedded_transport import EmbeddedRuntimeError, EmbeddedTransport, EmbeddedTransportError
+from .embedded_transport import EMBEDDED_CONTROL_WORKERS, EmbeddedRuntimeError, EmbeddedTransport, EmbeddedTransportError
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -197,7 +197,7 @@ class EmbeddedCallbackPump:
         # 保留失败直到工作线程清理完成，而非在执行器汇合前宣称关闭。
         failure: BaseException | None = None
         try:
-            with ThreadPoolExecutor(max_workers=1, thread_name_prefix="luaskills-control") as native_executor:
+            with ThreadPoolExecutor(max_workers=EMBEDDED_CONTROL_WORKERS, thread_name_prefix="luaskills-control") as native_executor:
                 with ThreadPoolExecutor(max_workers=self._config.max_concurrent_handlers, thread_name_prefix="luaskills-handler") as handler_executor:
                     self._native_executor = native_executor
                     self._handler_executor = handler_executor

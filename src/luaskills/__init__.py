@@ -33,6 +33,7 @@ from .config_contract import (
     SkillPackageConfigDescribeMode,
 )
 from .embedded_transport import (
+    EmbeddedResultReleaseError,
     EmbeddedRuntimeError,
     EmbeddedTransport,
     EmbeddedTransportConfig,
@@ -41,6 +42,7 @@ from .embedded_transport import (
 from .embedded_callbacks import EffectState, HostCallbackContext, HostCapability
 from .embedded_pump import CallbackPumpConfig, EmbeddedCallbackPump
 from .embedded_contract import EmbeddedNativeStatus
+from .embedded_driver import EmbeddedCommand, EmbeddedCommandDriver, EmbeddedDriverConfig
 from .ffi import (
     HostToolJsonAction,
     HostToolJsonCallback,
@@ -117,6 +119,10 @@ from .types import (
 )
 
 __all__ = [
+    "EmbeddedCommand",
+    "EmbeddedCommandDriver",
+    "EmbeddedDriverConfig",
+    "EmbeddedResultReleaseError",
     "EmbeddedNativeStatus",
     "Authority",
     "CallbackPumpConfig",

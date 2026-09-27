@@ -393,6 +393,14 @@ finally:
 
 请求可以并发执行。`close()` 永久请求关闭，同时保留核心查询及宿主确认访问。通过核心生命周期命令排空并移除每个运行时后，再调用 `free()`。原生释放失败后，传输仍可用于排空；析构器不会静默释放活动运行时或卸载动态库。结果释放显式失败时，精确描述符保持拥有状态，活动调用返回后可通过 `release_results()` 重试释放。
 
+`EmbeddedResultReleaseError` 是传输错误子类，保留释放失败前已复制的不可变 `response_bytes`。`delivered_result()` 按正常成功／业务错误规则重新解码该副本，不发起原生工作，从而保留已经创建的运行时、池、会话或操作身份。释放恢复和交付恢复分开处理：通过 `release_results()` 重试释放内存，从保留回执恢复身份，绝不能推断应该重新提交变更。缺少或无效复制字节仍明确表示缺乏交付证据。
+
+`EmbeddedCommandDriver(transport, EmbeddedDriverConfig(work_threads=..., max_work_commands=..., max_control_commands=...))` 提供拥有型异步 FFI 通道。`submit(command)` 冻结 JSON 并保留回执后立即返回 `EmbeddedCommand`，通过 `result(timeout=...)` 或 `await result_async()` 观察同一个实际命令。取消观察者、关闭其 asyncio 循环或等待超时均不取消原生执行。`driver.commands` 保留精确回执对象，可按驱动器局部 `command_id` 恢复；`request` 及成功结果均返回独立副本。只有交付实际返回且结果或失败已经处理后，才调用 `forget()`。已完成回执在遗忘前继续占用所属通道配额；遗忘回执绝不遗忘核心操作。
+
+一个传输同时由一个驱动器拥有，工作与短控制具有独立执行器及回执配额，运行时构造无法占用 SDK 控制工作线程或其回执配额。所有权入场还为每个驱动器工作线程及回调泵控制工作线程预留相应原生结果槽和最坏 `max_response_bytes`。传输数量或聚合字节容量不足时，在发布所有者前拒绝；构造后不可重新赋值传输预算。直接底层请求及释放失败后保留的缓冲额外消耗原生容量，宿主仍须将其纳入容量／恢复策略。
+
+驱动器 `request_close()` 封闭新命令并启动拥有型关闭；`close(timeout=...)` 和 `close_async()` 观察实际执行器汇合。超时或取消关闭观察仍保留该关闭过程。关闭驱动器不会关闭核心运行时或回调泵。取消／排空核心期间保持驱动器与泵可用，处理待完成回执，释放已关闭运行时，再关闭驱动器并释放传输。驱动器拒绝阻塞 `operation_wait`，应通过短 `operation_status` 查询保持原生工作线程可用。在实现受控依赖追踪前，宿主回调中的嵌套驱动器调用明确不受支持。类型化运行时／操作／会话便利层仍在实施中。
+
 `EmbeddedCallbackPump(transport, runtime_id, config)` 为已初始化运行时拥有队列 Python 回调。显式提供正数边界 `CallbackPumpConfig(max_concurrent_handlers=..., max_pending_commands=..., poll_interval_ms=...)`。一个传输上的同一运行时只能有一个事件泵；其队列能力须全部通过该泵注册，不得另行消费同一个核心请求队列。类型化运行时构造和调用辅助接口仍在实施中。
 
 | 接口 | 契约 |
@@ -412,6 +420,8 @@ finally:
 原生集成验证位于 `tests/test_embedded_native_e2e.py`。设置 `PYTHONPATH=src`，并以 `LUASKILLS_LIB` 选择匹配开发动态库后，运行 `rtk proxy python -m unittest discover -s tests -p test_embedded_native_e2e.py -v`。测试覆盖实际 Lua 状态、结构化值、取消、并发控制及迟到提交回调结果。
 
 将同一命令的测试模式改为 `-p test_embedded_pump.py`，可验证实际同步／异步回调寿命、有界入场、调用方循环取消、迟到副作用及确认丢失恢复。保持上述环境变量，使用 `rtk proxy python -m unittest discover -s tests -v` 运行 SDK 完整回归。
+
+使用 `-p test_embedded_driver.py` 还可验证独立控制容量、冻结回执、取消循环恢复、实际工作线程汇合所有权，以及原生缓冲释放失败后的真实 Lua 操作身份恢复。
 
 事件泵同步观察等待超时在所有支持版本（包含 Python 3.10）均抛出内置 `TimeoutError`。超时保留底层命令和回调所有权。异步观察者取消继续遵守前述拥有循环规则。
 
