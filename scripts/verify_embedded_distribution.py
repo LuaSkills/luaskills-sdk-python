@@ -20,6 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 PACKAGE_ARTIFACTS = (
     "luaskills/__init__.py",
     "luaskills/embedded_client.py",
+    "luaskills/embedded_scope.py",
     "luaskills/embedded_driver.py",
     "luaskills/embedded_transport.py",
     "luaskills/embedded_pump.py",
@@ -59,15 +60,17 @@ import typing
 sys.path.insert(0, sys.argv[1])
 from luaskills import embedded_contract as contract
 from luaskills import embedded_client as client
+from luaskills import embedded_scope as scope
 import luaskills
 assert contract.__file__.startswith(sys.argv[1])
 assert client.__file__.startswith(sys.argv[1])
+assert scope.__file__.startswith(sys.argv[1])
 # Resolve imported recursive aliases in their defining contract namespace, as required by typing on Python 3.10.
 # 按 Python 3.10 typing 的要求，在定义契约命名空间解析导入的递归别名。
-for name in ("EmbeddedClient", "EmbeddedPending", "EmbeddedRuntime", "EmbeddedPlugin",
-             "EmbeddedPool", "EmbeddedSession", "EmbeddedSessionOpen", "EmbeddedOperation"):
-    declaration = getattr(client, name)
-    assert getattr(luaskills, name) is declaration
+for declaration in (client.EmbeddedClient, client.EmbeddedPending, client.EmbeddedRuntime, client.EmbeddedPlugin,
+                    client.EmbeddedPool, client.EmbeddedSession, client.EmbeddedSessionOpen, client.EmbeddedOperation,
+                    scope.EmbeddedRuntimeScope):
+    assert getattr(luaskills, declaration.__name__) is declaration
     typing.get_type_hints(declaration)
     for method in vars(declaration).values():
         if callable(method) and hasattr(method, "__annotations__"):

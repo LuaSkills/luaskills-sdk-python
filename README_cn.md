@@ -405,13 +405,19 @@ finally:
 
 运行时反射注解使用 `typing.get_type_hints(method, localns=vars(luaskills.embedded_contract))`：导入的递归别名在支持的 Python 版本下需要其定义命名空间。静态类型检查直接使用生成声明；分发验证器同时检查实际 wheel 中的声明及上述显式解析的方法注解。
 
-先用 `client.reserve()` 取得运行时句柄，再调用其单次 `initialize(engine_options, runtime_config)`。初始化观察中断后保留该身份并查询 `status()`，不重新构造。`client.runtime(id)` 及运行时的 `plugin(id)`、`pool(id)`、`session(id)`、`operation(id)` 仅绑定已知身份，不探测、不声称就绪；后续原生命令校验存在性及归属。
+先用 `client.reserve()` 取得运行时句柄，再调用其单次 `initialize(engine_options, runtime_config)`。初始化回执确认的是尝试；始终查询 `status()` 区分 `ready`、`failed`、`faulted` 并读取保留错误。初始化观察中断后保留该身份并查询状态，不重新构造。`client.runtime(id)` 及运行时的 `plugin(id)`、`pool(id)`、`session(id)`、`operation(id)` 仅绑定已知身份，不探测、不声称就绪；后续原生命令校验存在性及归属。
 
 `runtime.register_plugin(...)`、`register_pool(...)` 返回已确认句柄。`pool.submit(export, arguments, context, timeout_ms)` 和 `session.submit(...)` 返回操作句柄，其中 `timeout_ms` 是核心执行截止预算。`pool.open_session(timeout_ms)` 返回 `EmbeddedSessionOpen`，同时包含 `session` 和独立 `initialization` 操作；必须观察初始化操作，不能仅凭会话回执认定初始化成功。
 
 `operation.wait(timeout=..., poll_interval=...)` 和 `await operation.wait_async(poll_interval=...)` 通过短状态命令轮询，返回包含失败及副作用证据的完整终态快照。同步超时及 `asyncio.wait_for` 仅影响观察。显式 `operation.cancel()` 请求协作取消，返回布尔值不代表完成。轮询自动消费成功的只读 SDK 回执，中断或失败的回执保留在 `driver.commands` 供恢复。`operation.forget()` 删除终态**核心记录**，其返回的待完成命令回执也须处理并遗忘。
 
-运行时、插件、池和会话的 `request_close()` 返回关闭确认；执行 `free()` 或 `forget()` 前应核对实际原生状态。类型句柄借用驱动器，尚不拥有回调泵，也未提供上下文管理器；拥有型生命周期入口完成前继续显式按顺序关闭。设置 `LUASKILLS_LIB` 与 `PYTHONPATH=src` 后，用 `-p test_embedded_client.py` 验证真实公共／专用池、固定会话状态、生命周期屏障及迟到提交回调。
+运行时、插件、池和会话的 `request_close()` 返回关闭确认；执行 `free()` 或 `forget()` 前应核对实际原生状态。类型句柄借用驱动器。设置 `LUASKILLS_LIB` 与 `PYTHONPATH=src` 后，用 `-p test_embedded_client.py` 验证真实公共／专用池、固定会话状态、生命周期屏障及迟到提交回调。
+
+`EmbeddedRuntimeScope(runtime, pump=existing_pump)` 拥有一个已知运行时及其精确可选泵的有序关闭。使用 `with scope as owner:` 或 `async with scope as owner:`，通过 `owner.runtime` 访问类型句柄。一个作用域只能进入一次，重复所有者被拒绝。不需要泵时可在初始化前接管预留运行时；需要回调时，先初始化并确认 `ready`，创建泵，再一起接管。接管后不能新增泵。作用域借用传输及驱动器，其他运行时仍可使用。
+
+作用域构造在启动非守护协调线程前，额外预留一个原生控制槽及其最坏响应字节。`request_close()` 启动后台清理，`close(timeout=...)`、`close_async()` 负责观察。清理按关闭原生入场、汇合回调泵、等待实际原生线程／VM 排空、移除精确槽位的顺序执行，驱动器回执配额耗尽不会阻塞这些控制。作用域不关闭共享传输及驱动器；接管期间拒绝独立类型 `runtime.free()`。上下文退出还会释放核心操作记录，需要保留的结果／副作用证据应在释放运行时前保存；持久副作用恢复仍是独立实施里程碑。
+
+观察超时、取消或调用方循环关闭，均保持清理所有权，可通过 `scope.status` 查询。已交付结果的缓冲释放失败保留最后已证明检查点，通过 `retry_close(...)` 或 `retry_close_async()` 显式恢复保留传输缓冲并继续，不重复已确认变更。此共享传输恢复拒绝活动读取者。作用域根控制命令被原生容量拒绝时，也允许在容量恢复后显式重试。普通重复关闭仅观察同一次尝试。其他未获证明的失败保留所有权并报告 `retryable=False`，不授权重放或卸载。使用 `-p test_embedded_scope.py` 验证实际上下文退出、初始化失败、回调寿命及释放恢复。
 
 `EmbeddedCallbackPump(transport, runtime_id, config)` 为已初始化运行时拥有队列 Python 回调。显式提供正数边界 `CallbackPumpConfig(max_concurrent_handlers=..., max_pending_commands=..., poll_interval_ms=...)`。一个传输上的同一运行时只能有一个事件泵；其队列能力须全部通过该泵注册，不得另行消费同一个核心请求队列。
 

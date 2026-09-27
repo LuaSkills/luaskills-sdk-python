@@ -53,6 +53,7 @@ from .embedded_client import (
     EmbeddedSession,
     EmbeddedSessionOpen,
 )
+from .embedded_scope import EmbeddedRuntimeScope
 from .ffi import (
     HostToolJsonAction,
     HostToolJsonCallback,
@@ -135,6 +136,7 @@ __all__ = [
     "EmbeddedPlugin",
     "EmbeddedPool",
     "EmbeddedRuntime",
+    "EmbeddedRuntimeScope",
     "EmbeddedSession",
     "EmbeddedSessionOpen",
     "EmbeddedCommand",

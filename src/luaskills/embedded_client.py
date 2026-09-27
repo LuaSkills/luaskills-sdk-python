@@ -174,8 +174,10 @@ class EmbeddedRuntime:
         """
         Start the one-shot native construction using explicit engine_options and runtime_config budgets.
         使用显式 engine_options 和 runtime_config 预算开始原生单次构造。
-        Return a retained command receipt; after interruption query status instead of reinitializing.
-        返回保留命令回执；中断后查询状态，不重新初始化。
+        Return an attempt receipt, not a success claim; always query status for ready, failed or faulted.
+        返回尝试回执，不代表初始化成功；始终查询状态区分 ready、failed 或 faulted。
+        After interruption retain this identity and query status instead of reinitializing.
+        中断后保留此身份并查询状态，不重新初始化。
         """
         return self._client._submit({"type": "runtime_initialize", "runtime_id": self.runtime_id,
                                     "engine_options": engine_options, "runtime_config": runtime_config}, lambda value: value)
@@ -199,6 +201,7 @@ class EmbeddedRuntime:
         Request removal of this exact slot; the core rejects premature release while resources are live.
         请求移除此精确槽；资源仍存活时由核心拒绝过早释放。
         """
+        self._client._driver._transport._check_unmanaged_runtime(self.runtime_id)
         return self._client._submit({"type": "runtime_free", "runtime_id": self.runtime_id}, lambda value: value)
 
     def register_plugin(self, plugin_id: str, config: wire.InputEmbeddedPluginConfig) -> EmbeddedPending[EmbeddedPlugin]:

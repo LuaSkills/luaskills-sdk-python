@@ -214,6 +214,9 @@ class EmbeddedTransport:
         # Exact callback pump owners prevent duplicate consumption and transport release between polling calls.
         # 精确回调泵所有者阻止重复消费及轮询调用间隙中的传输释放。
         self._callback_pumps: dict[str, object] = {}
+        # One lifecycle coordinator per adopted runtime keeps drainage independent of command receipt quotas.
+        # 每个接管运行时拥有一个生命周期协调器，使排空独立于命令回执配额。
+        self._runtime_scopes: dict[str, object] = {}
         # One bounded command driver retains this transport until all of its native workers actually return.
         # 一个有界命令驱动器保留此传输，直到其全部原生工作线程实际返回。
         self._command_driver: object | None = None
@@ -415,7 +418,7 @@ class EmbeddedTransport:
         with self._lock:
             if self._transport_id is None:
                 raise RuntimeError("embedded transport has been freed")
-            if self._active_calls or self._results or self._callback_pumps or self._command_driver is not None:
+            if self._active_calls or self._results or self._callback_pumps or self._runtime_scopes or self._command_driver is not None:
                 raise RuntimeError("embedded transport still owns active calls or results")
             self._check("luaskills_ffi_embedded_transport_free_v1", self._free(self._transport_id))
             self._transport_id = None
@@ -430,9 +433,11 @@ class EmbeddedTransport:
                 raise RuntimeError("embedded transport has been freed")
             if runtime_id in self._callback_pumps:
                 raise RuntimeError("embedded runtime already has a Python callback pump")
+            if runtime_id in self._runtime_scopes:
+                raise RuntimeError("attach callback pumps before adopting an embedded runtime scope")
             if len(self._callback_pumps) >= self.config.max_runtimes:
                 raise RuntimeError("callback pump ownership exceeds transport runtime capacity")
-            self._check_worker_reservation(self._command_slots + (len(self._callback_pumps) + 1) * EMBEDDED_CONTROL_WORKERS)
+            self._check_worker_reservation(self._command_slots + (len(self._callback_pumps) + len(self._runtime_scopes) + 1) * EMBEDDED_CONTROL_WORKERS)
             self._callback_pumps[runtime_id] = owner
 
     def _claim_command_driver(self, owner: object, native_slots: int) -> None:
@@ -447,7 +452,7 @@ class EmbeddedTransport:
                 raise RuntimeError("embedded transport has been freed")
             if self._command_driver is not None:
                 raise RuntimeError("embedded transport already has a command driver")
-            self._check_worker_reservation(native_slots + len(self._callback_pumps) * EMBEDDED_CONTROL_WORKERS)
+            self._check_worker_reservation(native_slots + (len(self._callback_pumps) + len(self._runtime_scopes)) * EMBEDDED_CONTROL_WORKERS)
             self._command_driver = owner
             self._command_slots = native_slots
 
@@ -486,3 +491,46 @@ class EmbeddedTransport:
             if self._callback_pumps.get(runtime_id) is not owner:
                 raise RuntimeError("callback pump ownership identity does not match")
             del self._callback_pumps[runtime_id]
+
+    def _claim_runtime_scope(self, runtime_id: str, owner: object, pump: object | None) -> None:
+        """
+        Adopt exact runtime_id and its existing pump with one reserved native control slot for owner.
+        为 owner 接管精确 runtime_id 及其现有 pump，并预留一个原生控制槽。
+        Return only after bounded ownership is published; reject duplicate or omitted live pump ownership.
+        仅在发布有界所有权后返回；拒绝重复所有权或遗漏活动事件泵。
+        """
+        with self._lock:
+            if self._transport_id is None:
+                raise RuntimeError("embedded transport has been freed")
+            if runtime_id in self._runtime_scopes:
+                raise RuntimeError("embedded runtime already has a lifecycle scope")
+            if self._callback_pumps.get(runtime_id) is not pump:
+                raise RuntimeError("runtime scope must adopt the exact existing callback pump")
+            if len(self._runtime_scopes) >= self.config.max_runtimes:
+                raise RuntimeError("runtime scope ownership exceeds transport runtime capacity")
+            self._check_worker_reservation(self._command_slots +
+                (len(self._callback_pumps) + len(self._runtime_scopes) + 1) * EMBEDDED_CONTROL_WORKERS)
+            self._runtime_scopes[runtime_id] = owner
+
+    def _release_runtime_scope(self, runtime_id: str, owner: object) -> None:
+        """
+        Release only owner's exact lifecycle claim after proven native drainage or failed thread startup.
+        仅在原生排空得到证明或线程启动失败后，释放 owner 的精确生命周期声明。
+        Return nothing; mismatched ownership cannot remove another coordinator's reservation.
+        无返回值；所有权不匹配时不能移除其他协调器的预留。
+        """
+        with self._lock:
+            if self._runtime_scopes.get(runtime_id) is not owner:
+                raise RuntimeError("embedded runtime scope ownership mismatch")
+            del self._runtime_scopes[runtime_id]
+
+    def _check_unmanaged_runtime(self, runtime_id: str) -> None:
+        """
+        Reject independent typed runtime release while runtime_id is owned by a lifecycle scope.
+        runtime_id 由生命周期作用域拥有时，拒绝独立类型运行时释放。
+        Return nothing; the scope uses its reserved control path to perform the actual release.
+        无返回值；作用域通过其预留控制路径执行实际释放。
+        """
+        with self._lock:
+            if runtime_id in self._runtime_scopes:
+                raise RuntimeError("close the owning embedded runtime scope before independent release")
