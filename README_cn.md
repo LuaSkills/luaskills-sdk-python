@@ -401,7 +401,7 @@ finally:
 | `request_close()` / `close(timeout=...)` / `close_async()` | 退役全部处理器；实际关闭等待回调、确认及拥有线程。超时或观察者取消仍保留所有权。 |
 | `status` / `retry_acknowledgements(timeout=...)` | 暴露保留身份及确认失败。显式交付重试绝不重跑业务处理器；成功回执丢失时必须核对精确核心完成证据。 |
 
-处理器接收 `(arguments, context)`，返回普通 JSON 值，包含 `None`。`context.caller`、`request_id`、`registration_id` 独立于应用参数携带可信核心身份。取消是协作式的：使用 `raise_if_cancelled()`、`wait_cancelled(timeout)` 或 `await wait_cancelled_async()`；需要取消执行时显式取消原操作。`remaining_ms` 仅供参考。变更处理器通过 `context.report_effects(...)` 报告真实副作用，默认值为 `unknown`；成功或取消均不隐含提交／回滚。异常、非法 JSON 及超大结果仍保留最近的副作用报告。
+处理器接收 `(arguments, context)`，返回普通 JSON 值，包含 `None`。`context.caller`、`request_id`、`registration_id` 独立于应用参数携带可信核心身份。取消是协作式的：使用 `raise_if_cancelled()`、`wait_cancelled(timeout)` 或 `await wait_cancelled_async()`；需要取消执行时显式取消原操作。`remaining_ms` 仅供参考。变更处理器通过 `context.report_effects(...)` 报告真实副作用，默认值为 `unknown`；成功或取消均不隐含提交／回滚。异常、非法 JSON 及超大结果仍保留最近的副作用报告。完成帧被原生请求解析器明确拒绝时，转换为携带相同副作用的有界回调失败；已返回原生结果的释放失败不能授权改写该完成结果。
 
 同步处理器在有界工作线程运行。异步处理器在事件泵的独立循环运行，必须使用为该循环创建的资源；不得阻塞该循环、在自身副作用完成前返回，或在回调内等待同一个泵排空。取消调用方 asyncio 任务或关闭其循环，不会取消拥有型处理器及注销任务。运行时取消后，保持事件泵存活直至实际处理器完成，关闭事件泵后再释放原生运行时和传输。确认恢复无法建立精确完成证据时，应保留原操作记录并解决已报告错误，不得遗忘该证据或卸载动态库。
 

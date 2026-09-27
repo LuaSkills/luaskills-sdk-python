@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import sys
 import threading
 import time
 import unittest
@@ -196,11 +197,20 @@ class EmbeddedPumpIntegrationTests(EmbeddedNativeFixture, unittest.TestCase):
                 raise ValueError("secret must not enter Lua error diagnostics")
             if arguments == "oversized":
                 return "x" * self.transport.config.max_request_bytes
+            if arguments == "deeply-nested":
+                # The result exceeds parser nesting while remaining below the transport's byte ceiling.
+                # 结果超过解析器嵌套限制，同时仍低于传输字节上限。
+                value = None
+                for _ in range(sys.getrecursionlimit() * 2):
+                    value = [value]
+                return value
+            if arguments == "unknown-code":
+                raise EmbeddedRuntimeError("custom-code-outside-core-contract", "secret host error")
             return {object()}
 
         self.pump.register([self.capability(handler)], timeout=5)
         pool_id = self.callback_pool()
-        for arguments in ("raise", "invalid-json", "oversized"):
+        for arguments in ("raise", "invalid-json", "oversized", "deeply-nested", "unknown-code"):
             done = self.terminal(self.submit(pool_id, arguments))
             outcome = done["value"]
             self.assertFalse(outcome["ok"], done)
@@ -300,6 +310,20 @@ class EmbeddedPumpIntegrationTests(EmbeddedNativeFixture, unittest.TestCase):
 
     def test_lost_completion_receipt_reconciles_exact_core_evidence_without_resending(self):
         """
+        Reconcile a lost native success receipt without sending the completion mutation a second time.
+        对账丢失的原生成功回执，不再次发送完成变更。
+        """
+        self._exercise_lost_completion_receipt("luaskills_ffi_embedded_request_v1", 6)
+
+    def test_result_release_rejection_does_not_rewrite_completed_host_result(self):
+        """
+        A result-release InvalidArgument follows dispatch and cannot authorize replacing the actual callback result.
+        结果释放 InvalidArgument 发生在分发后，不能授权替换实际回调结果。
+        """
+        self._exercise_lost_completion_receipt("luaskills_ffi_embedded_result_free_v1", 1)
+
+    def _exercise_lost_completion_receipt(self, function_name, status):
+        """
         Recover a lost success receipt from the exact core effect record without replaying handler or completion mutation.
         从精确核心副作用记录恢复丢失的成功回执，不重放处理器或完成变更。
         """
@@ -320,7 +344,7 @@ class EmbeddedPumpIntegrationTests(EmbeddedNativeFixture, unittest.TestCase):
                 completions.append(command["operation"]["request_id"])
                 if not failed.is_set():
                     failed.set()
-                    raise EmbeddedTransportError("luaskills_ffi_embedded_request_v1", 6)
+                    raise EmbeddedTransportError(function_name, status)
             return result
 
         def handler(arguments, context):

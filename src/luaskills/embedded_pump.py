@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from typing import Any, Coroutine, Iterable
 
 from .embedded_callbacks import HOST_CALLBACK_RUNTIME, HostCallbackContext, HostCapability
-from .embedded_transport import EmbeddedRuntimeError, EmbeddedTransport
+from .embedded_transport import EmbeddedRuntimeError, EmbeddedTransport, EmbeddedTransportError
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -347,7 +347,7 @@ class EmbeddedCallbackPump:
                 record.outcome = {"ok":False, "error":failure, "effects":record.context.effects}
             try:
                 record.encoded_completion = self._encode_completion(record)
-            except (TypeError, ValueError, OverflowError, UnicodeError):
+            except (TypeError, ValueError, OverflowError, UnicodeError, RecursionError):
                 record.outcome = {"ok":False, "error":{"code":"execution_failed",
                     "message":"Python host callback produced an invalid or oversized result"}, "effects":record.context.effects}
                 record.encoded_completion = self._encode_completion(record)
@@ -359,14 +359,29 @@ class EmbeddedCallbackPump:
 
     async def _acknowledge(self, record: _Request) -> None:
         """
-        Serialize native completion against status reads and retain actual outcome ownership on acknowledgement failure.
-        相对于状态读取串行化原生完成，并在确认失败时保留实际结果所有权。
+        Serialize completion and retain ownership on uncertain failure; reject results refused before native dispatch.
+        串行化完成并在不确定失败时保留所有权；拒绝在原生分发前被拒绝的结果。
         """
         async with record.native_lock:
             if self._requests.get(record.context.request_id) is not record:
                 return
             try:
-                await self._loop.run_in_executor(self._native_executor, self._transport._request_encoded, record.encoded_completion)
+                try:
+                    await self._loop.run_in_executor(self._native_executor, self._transport._request_encoded, record.encoded_completion)
+                except EmbeddedTransportError as error:
+                    # Only request entrypoint InvalidArgument proves that this exact frame was rejected before dispatch.
+                    # 仅请求入口的 InvalidArgument 能证明此精确帧在分发前被拒绝。
+                    # Result-release failures may follow a successful mutation and must never rewrite that completion.
+                    # 结果释放失败可能发生在变更成功后，绝不能改写该完成结果。
+                    if error.function_name != "luaskills_ffi_embedded_request_v1" or error.status != 1:
+                        raise
+                    record.outcome = {"ok":False, "error":{"code":"execution_failed",
+                        "message":"Python host callback result was rejected by the native parser"},
+                        "effects":record.outcome["effects"]}
+                    record.encoded_completion = self._encode_completion(record)
+                    # A bounded rejection acknowledgement preserves actual effects without executing the handler again.
+                    # 有界拒绝确认保留实际副作用，不再次执行处理器。
+                    await self._loop.run_in_executor(self._native_executor, self._transport._request_encoded, record.encoded_completion)
             except Exception as error:
                 self._record_failure(error)
                 return
