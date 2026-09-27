@@ -423,6 +423,8 @@ Scope construction reserves one additional native control slot and its worst-cas
 
 Observer timeout, cancellation or caller-loop closure leaves cleanup owned and queryable through `scope.status`. A delivered result-buffer release failure retains the last proven checkpoint; `retry_close(...)` or `retry_close_async()` explicitly recovers retained transport buffers and resumes without repeating an acknowledged mutation. This shared transport recovery rejects active readers. Native capacity rejection of the scope's root controls also permits explicit retry after capacity becomes available. Ordinary repeated close observes the same attempt. Other unproven failures keep ownership and report `retryable=False`; they do not authorize replay or unloading. Use `-p test_embedded_scope.py` for actual context-exit, initialization-failure, callback-lifetime and release-recovery tests.
 
+Scope checkpoints require the response's exact `runtime_id`, including copied success after buffer-release failure. Status queries additionally require a boolean `closed` and a known generated initialization state. Missing, mismatched or malformed evidence cannot advance shutdown or authorize mutation replay; unproven Python delivery retains the scope for infrastructure recovery.
+
 `EmbeddedCallbackPump(transport, runtime_id, config)` owns queued Python callbacks for an already initialized runtime. Supply `CallbackPumpConfig(max_concurrent_handlers=..., max_pending_commands=..., poll_interval_ms=...)` with explicit positive limits. Exactly one pump may own a runtime on a transport. Register its queued capabilities exclusively through that pump; do not separately consume the same core request queue.
 
 | API | Contract |

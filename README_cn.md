@@ -423,6 +423,8 @@ finally:
 
 观察超时、取消或调用方循环关闭，均保持清理所有权，可通过 `scope.status` 查询。已交付结果的缓冲释放失败保留最后已证明检查点，通过 `retry_close(...)` 或 `retry_close_async()` 显式恢复保留传输缓冲并继续，不重复已确认变更。此共享传输恢复拒绝活动读取者。作用域根控制命令被原生容量拒绝时，也允许在容量恢复后显式重试。普通重复关闭仅观察同一次尝试。其他未获证明的失败保留所有权并报告 `retryable=False`，不授权重放或卸载。使用 `-p test_embedded_scope.py` 验证实际上下文退出、初始化失败、回调寿命及释放恢复。
 
+作用域检查点要求响应携带精确 `runtime_id`，包括缓冲释放失败后的复制成功响应。状态查询还要求 `closed` 为布尔值，初始化状态属于生成契约。缺失、错配或畸形证据不能推进关闭，也不授权变更重放；未经证明的 Python 交付继续保留作用域，等待基础设施恢复。
+
 `EmbeddedCallbackPump(transport, runtime_id, config)` 为已初始化运行时拥有队列 Python 回调。显式提供正数边界 `CallbackPumpConfig(max_concurrent_handlers=..., max_pending_commands=..., poll_interval_ms=...)`。一个传输上的同一运行时只能有一个事件泵；其队列能力须全部通过该泵注册，不得另行消费同一个核心请求队列。
 
 | 接口 | 契约 |

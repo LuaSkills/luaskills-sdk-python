@@ -12,7 +12,8 @@ import threading
 import time
 import unittest
 from pathlib import Path
-from unittest.mock import PropertyMock, patch
+from types import SimpleNamespace
+from unittest.mock import Mock, PropertyMock, patch
 
 from luaskills import (
     CallbackPumpConfig, EmbeddedCallbackPump, EmbeddedClient, EmbeddedCommandDriver,
@@ -31,6 +32,54 @@ class EmbeddedScopeBudgetTests(unittest.TestCase):
     Validate native control capacity before creating any lifecycle thread or native runtime mutation.
     在创建任何生命周期线程或原生运行时变更前验证原生控制容量。
     """
+
+    def test_control_checkpoints_reject_wrong_identity_and_malformed_status(self):
+        """
+        Exercise checkpoint validation without starting a thread or manufacturing native ownership.
+        不启动线程也不制造原生所有权，验证检查点校验。
+        Every consumed identity and status field must have its exact contract type before advancement.
+        推进前每个消费的身份及状态字段都必须具有精确契约类型。
+        """
+        scope = object.__new__(EmbeddedRuntimeScope)
+        scope._runtime = SimpleNamespace(runtime_id="exact-slot")
+        scope._lock = threading.Lock()
+        for command, phase, following in [("runtime_close", "closing_runtime", "draining_callbacks"),
+                                          ("runtime_free", "releasing_runtime", "released")]:
+            for value in [None, [], {}, {"runtime_id": "other-slot"}, {"runtime_id": 1}]:
+                for failed_release in [False, True]:
+                    with self.subTest(command=command, value=value, failed_release=failed_release):
+                        scope._phase = phase
+                        scope._release_failure = False
+                        scope._uncertain_delivery = False
+                        scope._transport = Mock()
+                        if failed_release:
+                            failure = EmbeddedResultReleaseError(EmbeddedNativeStatus.INTERNAL,
+                                json.dumps({"protocol_version": 1, "status": "ok", "result": value}).encode())
+                            scope._transport.request.side_effect = failure
+                            with self.assertRaises(EmbeddedResultReleaseError) as observed:
+                                scope._transition(command, following)
+                            self.assertIs(observed.exception, failure)
+                            self.assertTrue(scope._uncertain_delivery)
+                        else:
+                            scope._transport.request.return_value = value
+                            with self.assertRaisesRegex(RuntimeError, "slot identity"):
+                                scope._transition(command, following)
+                        self.assertEqual(scope._phase, phase)
+                        scope._transport.request.assert_called_once_with({"type": command, "runtime_id": "exact-slot"})
+                        scope._transport._release_runtime_scope.assert_not_called()
+
+        # Only the fields consumed for shutdown are validated here; full wire typing remains generated.
+        # 此处只校验关闭所消费字段；完整线类型仍由生成契约提供。
+        for value in [{"runtime_id": "other-slot", "closed": True, "initialization": "ready"},
+                      {"runtime_id": "exact-slot", "closed": "true", "initialization": "ready"},
+                      {"runtime_id": "exact-slot", "closed": 1, "initialization": "ready"},
+                      {"runtime_id": "exact-slot", "closed": True, "initialization": "unknown"},
+                      {"runtime_id": "exact-slot", "closed": True},
+                      {"runtime_id": "exact-slot", "initialization": "ready"}]:
+            with self.subTest(status=value), self.assertRaises(RuntimeError):
+                scope._validate_control("runtime_status", value)
+        value = {"runtime_id": "exact-slot", "closed": True, "initialization": "reserved"}
+        self.assertIs(scope._validate_control("runtime_status", value), value)
 
     def test_scope_cannot_overcommit_driver_native_reservations(self):
         """

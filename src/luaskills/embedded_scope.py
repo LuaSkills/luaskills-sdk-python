@@ -10,11 +10,11 @@ import threading
 import time
 from concurrent.futures import Future
 from types import TracebackType
-from typing import Any, Literal
+from typing import Any, Literal, cast, get_args
 
 from .embedded_client import EmbeddedRuntime, _POLL_INTERVAL, _validate_interval
 from .embedded_driver import EmbeddedCommandDriver
-from .embedded_contract import EmbeddedNativeStatus
+from .embedded_contract import EmbeddedNativeStatus, OutputInitializationPhase
 from .embedded_pump import EmbeddedCallbackPump
 from .embedded_transport import EmbeddedResultReleaseError, EmbeddedRuntimeError, EmbeddedTransportError
 
@@ -22,6 +22,10 @@ from .embedded_transport import EmbeddedResultReleaseError, EmbeddedRuntimeError
 # Checkpoints advance only after an acknowledged native transition, never after observer timeout.
 # 检查点仅在原生转换得到确认后推进，绝不因观察超时推进。
 _Phase = Literal["open", "closing_runtime", "draining_callbacks", "draining_runtime", "releasing_runtime", "released", "closed"]
+
+# Initialization vocabulary comes from the generated native contract rather than a second lifecycle schema.
+# 初始化词汇来自生成的原生契约，不创建第二份生命周期 Schema。
+_INITIALIZATION_PHASES = frozenset(get_args(OutputInitializationPhase))
 
 
 class EmbeddedRuntimeScope:
@@ -136,6 +140,21 @@ class EmbeddedRuntimeScope:
                 self._transport._release_runtime_scope(self.runtime.runtime_id, self)
                 self._claim_released = True
 
+    def _validate_control(self, command_type: str, value: Any) -> dict[str, Any]:
+        """
+        Validate command_type's copied slot identity and consumed lifecycle fields; return the original object.
+        校验 command_type 的已复制槽身份及消费的生命周期字段；返回原对象。
+        Invalid value cannot advance a checkpoint or authorize replay of a lifecycle mutation.
+        无效 value 不能推进检查点，也不能授权重放生命周期变更。
+        """
+        if type(value) is not dict or value.get("runtime_id") != self.runtime.runtime_id:
+            raise RuntimeError("runtime scope control response changed its exact slot identity")
+        if command_type == "runtime_status" and (type(value.get("closed")) is not bool
+                or type(value.get("initialization")) is not str
+                or value["initialization"] not in _INITIALIZATION_PHASES):
+            raise RuntimeError("runtime scope control response has invalid lifecycle evidence")
+        return cast(dict[str, Any], value)
+
     def _transition(self, command_type: str, following: _Phase) -> None:
         """
         Execute command_type once and publish following only when its successful delivery is proven.
@@ -144,13 +163,13 @@ class EmbeddedRuntimeScope:
         复制的成功结果跨越结果释放失败而保留；仍报告该失败用于显式恢复。
         """
         try:
-            self._transport.request({"type": command_type, "runtime_id": self.runtime.runtime_id})
+            result = self._transport.request({"type": command_type, "runtime_id": self.runtime.runtime_id})
         except EmbeddedResultReleaseError as error:
             self._release_failure = True
             # Decode the exact copied response. Missing bytes or a business rejection cannot advance the checkpoint.
             # 解码精确复制响应；字节缺失或业务拒绝不能推进检查点。
             try:
-                error.delivered_result()
+                self._validate_control(command_type, error.delivered_result())
             except EmbeddedRuntimeError:
                 raise error
             except BaseException:
@@ -158,6 +177,7 @@ class EmbeddedRuntimeScope:
                 raise error
             self._set_phase(following)
             raise
+        self._validate_control(command_type, result)
         self._set_phase(following)
 
     def _drain(self) -> None:
@@ -181,6 +201,7 @@ class EmbeddedRuntimeScope:
                 # Queries use the scope's reserved slot even when driver receipt quotas are exhausted.
                 # 即使驱动器回执配额耗尽，查询仍使用作用域预留槽。
                 snapshot = self._transport.request({"type": "runtime_status", "runtime_id": self.runtime.runtime_id})
+                snapshot = self._validate_control("runtime_status", snapshot)
                 if snapshot["initialization"] == "faulted":
                     raise RuntimeError("faulted initialization prevents proving safe runtime release")
                 if snapshot["closed"]:
