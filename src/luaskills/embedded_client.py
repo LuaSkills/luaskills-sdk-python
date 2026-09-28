@@ -223,10 +223,22 @@ class EmbeddedRuntime:
         """
         return self._submit({"type": "history_next", "after": after}, lambda value: value)
 
+    def history_reconcile(self, history_runtime_id: str, operation_id: str, expected_revision: int,
+                          resolution: wire.InputOperationReconciliation) -> EmbeddedPending[int]:
+        """
+        Attach final trusted-host resolution to exact original history; return its durable successor revision.
+        为精确原历史附加最终可信宿主 resolution；返回其持久后继修订。
+        The host must authorize the resolver, verify every effect and prove all original owners stopped.
+        宿主必须授权对账者、核验全部副作用并证明所有原所有者已停止。
+        Retain expected_revision and all resolution fields for exact retries; live retained operations are rejected.
+        精确重试须保留 expected_revision 及全部 resolution 字段；仍保留的活动操作被拒绝。
+        """
+        return self._submit({"type": "history_reconcile", "history_runtime_id": history_runtime_id, "operation_id": operation_id, "expected_revision": expected_revision, "resolution": resolution}, lambda value: value)
+
     def history_forget(self, history_runtime_id: str, operation_id: str, expected_revision: int) -> EmbeddedPending[None]:
         """
-        Remove reconciled terminal history at expected_revision; first forget any retained live operation.
-        按 expected_revision 移除已对账终态历史；需先遗忘仍保留的活动操作。
+        Remove fully resolved history at expected_revision; first forget any retained live operation.
+        按 expected_revision 移除已完全解决的历史；需先遗忘仍保留的活动操作。
         Return the native deletion receipt; stale revisions and unresolved effects retain the original record.
         返回原生删除回执；过期修订及未决副作用保留原始记录。
         """

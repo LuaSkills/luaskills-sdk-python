@@ -233,6 +233,18 @@ class EmbeddedClientNativeTests(EmbeddedNativeFixture, unittest.TestCase):
         self.assertEqual(history["snapshot"], done)
         self.assertEqual(self.take(self.runtime.history_next()), history)
         self.assertIsNone(self.take(self.runtime.history_next({"runtime_id": namespace, "operation_id": operation.operation_id})))
+        # The host reviewed this exact pure fixture; the core never infers external truth from success.
+        # 宿主已审核此精确纯夹具；核心绝不从成功推断外部事实。
+        resolution = {"resolution_id": "python-audit", "resolver": "trusted-test-host",
+            "evidence": "fixture:pure-source-and-stopped-owner", "execution": "observed_terminal",
+            "effects": "not_applicable", "host_effects": []}
+        # Even terminal owners must be explicitly released before administrative reconciliation.
+        # 即使终态所有者也必须在管理对账前显式释放。
+        blocked = self.runtime.history_reconcile(namespace, operation.operation_id, history["revision"], resolution)
+        with self.assertRaises(EmbeddedRuntimeError) as error:
+            blocked.result(5)
+        self.assertEqual(error.exception.code, "busy")
+        blocked.forget()
         self.take(operation.forget())
         # Successful ordinary Lua cannot prove all possible side effects were reconciled.
         # 成功的普通 Lua 无法证明所有可能副作用均已对账。
@@ -251,6 +263,21 @@ class EmbeddedClientNativeTests(EmbeddedNativeFixture, unittest.TestCase):
             missing.result(5)
         self.assertEqual(error.exception.code, "not_found")
         missing.forget()
+
+        # Exact retries preserve the predecessor revision and cannot append duplicate audit conclusions.
+        # 精确重试保留前驱修订，不能追加重复审计结论。
+        revision = self.take(self.runtime.history_reconcile(namespace, operation.operation_id, history["revision"], resolution))
+        self.assertEqual(revision, history["revision"] + 1)
+        self.assertEqual(self.take(self.runtime.history_reconcile(namespace, operation.operation_id, history["revision"], resolution)), revision)
+        # Durable audit evidence stays separate from original observations after another real reopen.
+        # 再次真实重新打开后，持久审计证据仍与原观测分开。
+        reconciled = self.take(self.runtime.history_get(namespace, operation.operation_id))
+        self.assertEqual(reconciled["snapshot"], history["snapshot"])
+        self.assertEqual(reconciled["reconciliation"], resolution)
+        replace_runtime()
+        self.assertEqual(self.take(self.runtime.history_get(namespace, operation.operation_id)), reconciled)
+        self.take(self.runtime.history_forget(namespace, operation.operation_id, revision))
+        self.assertIsNone(self.take(self.runtime.history_get(namespace, operation.operation_id)))
 
     def test_shared_pool_calls_preserve_results_errors_and_explicit_forgetting(self):
         """
