@@ -374,7 +374,7 @@ class EmbeddedScopeNativeTests(EmbeddedNativeFixture, unittest.TestCase):
             "scope": "invocation", "max_concurrent": 1, "max_call_ms": 10000,
             "max_input_bytes": 1024, "max_output_bytes": 1024, "effects": "mutating", "idempotency": "none",
         }, handler, "sync")], 5)
-        operation_id = self.submit(self.pool("return {call=function(a) return vulcan.capabilities.call('scope.callback',a) end, shutdown=function() local r=vulcan.capabilities.call('scope.callback','closing'); assert(r.ok); return r.value end}", {"export":"shutdown", "arguments":None, "timeout_ms":5000}), None)
+        operation_id = self.submit(self.pool("return {call=function(a) return vulcan.capabilities.call('scope.callback',a) end, shutdown=function() local r=vulcan.capabilities.call('scope.callback','closing'); assert(r.ok); return r.value end}", {"export":"shutdown", "arguments":None, "timeout_ms":5000}, reuse="single_call"), None)
         self.assertTrue(entered.wait(2))
         scope = self.scope(pump)
 

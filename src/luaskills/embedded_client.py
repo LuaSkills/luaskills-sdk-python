@@ -310,6 +310,16 @@ class EmbeddedRuntime:
         """
         return EmbeddedSession(self, session_id)
 
+    def list_operations(self, pool_id: str | None, after_operation_id: str | None, limit: int) -> EmbeddedPending[wire.OutputOperationPage]:
+        """
+        Discover up to limit retained operations for optional pool_id after a retained after_operation_id cursor.
+        在保留的 after_operation_id 游标后，为可选 pool_id 发现至多 limit 个保留操作。
+        Return a typed publication-ordered page; restart after forgetting the cursor and query outcomes by exact ID.
+        返回按发布顺序排列的类型化页面；遗忘游标后重新开始，并按精确身份查询结果。
+        """
+        return self._submit({"type": "operation_list", "pool_id": pool_id,
+                             "after_operation_id": after_operation_id, "limit": limit}, lambda value: value)
+
     def operation(self, operation_id: str) -> EmbeddedOperation:
         """
         Bind known operation_id to this runtime so cancellation and terminal evidence remain queryable.

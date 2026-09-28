@@ -90,10 +90,12 @@ class EmbeddedNativeFixture:
         """
         return self.transport.request({"type":"runtime", "runtime_id":self.runtime_id, "operation":operation})
 
-    def pool(self, source, finalizer=None, session=False):
+    def pool(self, source, finalizer=None, reuse="reusable"):
         """
-        Register source with an optional finalizer; session=True explicitly selects a pinned instance.
-        注册源码及可选关闭回调；session=True 显式选择固定实例。
+        Register source and optional finalizer with the caller's explicit reuse policy.
+        按调用方显式复用策略注册源码及可选关闭回调。
+        Return the exact registered pool identity for subsequent fixture commands.
+        返回精确已注册池身份，供后续夹具命令使用。
         """
         request = {"type":"pool_register", "definition":{
             "plugin_id":self.plugin_id, "generation":"python-generation-1",
@@ -102,15 +104,12 @@ class EmbeddedNativeFixture:
             "source":source, "exports":[{"name":"call", "input_schema":True, "output_schema":True}],
         }, "policy":{
             "kind":"shared", "min_resident_vms":0, "max_resident_vms":2,
-            "max_running_calls":2, "max_queued_calls":4, "reuse":"reusable", "serial":False,
+            "max_running_calls":2, "max_queued_calls":4, "reuse":reuse, "serial":False,
             "backend":"in_process", "idle_ttl_ms":None, "max_uses":None,
         }, "permissions":["python.host"], "execution_revision":"python-v1"}
         if finalizer is not None:
             request["definition"]["finalizer"] = finalizer
             request["definition"]["exports"].append({"name":finalizer["export"], "input_schema":True, "output_schema":True})
-            request["policy"]["reuse"] = "single_call"
-        if session:
-            request["policy"]["reuse"] = "session"
         return self.command(request)["pool_id"]
 
     def submit(self, pool_id, arguments):
@@ -150,7 +149,7 @@ class EmbeddedNativeIntegrationTests(EmbeddedNativeFixture, unittest.TestCase):
         """
         pool_id = self.pool(
             "local called=false; local fail=false; return {call=function(a) called=true; fail=a; return nil end, shutdown=function() assert(called); if fail then error('closing failed') end; return nil end}",
-            {"export":"shutdown", "arguments":None, "timeout_ms":1000},
+            {"export":"shutdown", "arguments":None, "timeout_ms":1000}, reuse="single_call",
         )
         for fail in (False, True):
             with self.subTest(closing_failure=fail):
@@ -174,7 +173,7 @@ class EmbeddedNativeIntegrationTests(EmbeddedNativeFixture, unittest.TestCase):
         """
         pool_id = self.pool(
             "local n=0; return {call=function() n=n+1; return tostring(n) end, shutdown=function() return tostring(n) end}",
-            {"export":"shutdown", "arguments":None, "timeout_ms":1000}, session=True,
+            {"export":"shutdown", "arguments":None, "timeout_ms":1000}, reuse="session",
         )
         opening = self.command({"type":"session_open", "pool_id":pool_id, "timeout_ms":5000})
         self.assertEqual(self.terminal(opening["operation_id"])["phase"], "succeeded")
@@ -199,6 +198,44 @@ class EmbeddedNativeIntegrationTests(EmbeddedNativeFixture, unittest.TestCase):
         self.assertEqual(closing["finalization"]["outcome"], {"status":"succeeded", "value":"1"})
         self.assertEqual(self.command({"type":"operation_status", "operation_id":operation_id}), business)
         self.assertEqual(self.command({"type":"plugin_status", "plugin_id":self.plugin_id})["reserved_operations"], 0)
+
+    def test_reusable_finalization_is_discovered_after_later_business_ids(self):
+        """
+        Discover the reserved closing identity by publication order and retain same-VM state through the actual DLL.
+        通过实际 DLL 按发布顺序发现预留关闭身份，并保留同 VM 状态。
+        """
+        pool_id = self.pool(
+            "local n=0; return {call=function() n=n+1; return tostring(n) end, shutdown=function() return tostring(n) end}",
+            {"export":"shutdown", "arguments":None, "timeout_ms":1000}, reuse="reusable",
+        )
+        # Two business IDs span the earlier reservation without publishing it as an executable operation.
+        # 两个业务身份跨越较早预留，但不将预留发布为可执行操作。
+        business = []
+        for expected in ("1", "2"):
+            operation_id = self.submit(pool_id, None)
+            result = self.terminal(operation_id)
+            self.assertEqual(result["value"], expected)
+            business.append((operation_id, result))
+        self.command({"type":"pool_close", "pool_id":pool_id})
+        deadline = time.monotonic() + 5
+        while True:
+            page = self.command({"type":"operation_list", "pool_id":pool_id,
+                "after_operation_id":business[-1][0], "limit":1})
+            if page["operation_ids"]:
+                break
+            self.assertLess(time.monotonic(), deadline, page)
+            time.sleep(0.001)
+        self.assertEqual(len(page["operation_ids"]), 1)
+        closing_id = page["operation_ids"][0]
+        self.assertEqual(page["after_operation_id"], closing_id)
+        closing = self.terminal(closing_id)
+        self.assertEqual(closing["phase"], "succeeded")
+        self.assertTrue(closing["context"]["finalization_instance_id"].startswith("embedded-vm:"))
+        self.assertIsNone(closing["context"]["caller"]["session_id"])
+        self.assertEqual(closing["finalization"]["outcome"], {"status":"succeeded", "value":"2"})
+        for operation_id, previous in business:
+            self.assertNotEqual(operation_id, closing_id)
+            self.assertEqual(self.command({"type":"operation_status", "operation_id":operation_id}), previous)
 
     def test_actual_lua_state_json_types_and_native_lifecycle(self):
         """

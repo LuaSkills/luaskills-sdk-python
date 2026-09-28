@@ -28,7 +28,7 @@ EMBEDDED_CORE_VERSION = '0.5.9'
 
 # Generated contract metadata: EMBEDDED_CONTRACT_SHA256.
 # 生成的契约元数据：EMBEDDED_CONTRACT_SHA256。
-EMBEDDED_CONTRACT_SHA256 = '635f47f2884420e36876114474310bf197c9d2941204f626b5255f1e885c55b8'
+EMBEDDED_CONTRACT_SHA256 = 'efc9224e7a02141c3ffd24a7bb02cf613fa4113e45ac68e81eeef12c9137a867'
 
 # Generated contract metadata: EMBEDDED_DESCRIPTION_VERSION.
 # 生成的契约元数据：EMBEDDED_DESCRIPTION_VERSION。
@@ -48,7 +48,7 @@ EMBEDDED_ROOT_COMMANDS = ('describe', 'runtime_reserve', 'runtime_initialize', '
 
 # Generated contract metadata: EMBEDDED_RUNTIME_COMMANDS.
 # 生成的契约元数据：EMBEDDED_RUNTIME_COMMANDS。
-EMBEDDED_RUNTIME_COMMANDS = ('operation_persistence_failure', 'operation_retry_checkpoint', 'storage_status', 'storage_recover', 'storage_worker_recover', 'history_get', 'history_next', 'history_reconcile', 'history_forget', 'plugin_register', 'plugin_status', 'plugin_close', 'plugin_forget', 'pool_register', 'pool_status', 'pool_close', 'pool_forget', 'pool_revoke_permission', 'call_submit', 'session_open', 'session_submit', 'session_status', 'session_close', 'session_forget', 'operation_status', 'operation_wait', 'operation_cancel', 'operation_forget', 'capabilities_register', 'capabilities_list', 'capability_status', 'capability_unregister', 'capability_forget', 'host_requests_take', 'host_request_status', 'host_request_complete')
+EMBEDDED_RUNTIME_COMMANDS = ('operation_persistence_failure', 'operation_retry_checkpoint', 'storage_status', 'storage_recover', 'storage_worker_recover', 'history_get', 'history_next', 'history_reconcile', 'history_forget', 'plugin_register', 'plugin_status', 'plugin_close', 'plugin_forget', 'pool_register', 'pool_status', 'pool_close', 'pool_forget', 'pool_revoke_permission', 'call_submit', 'session_open', 'session_submit', 'session_status', 'session_close', 'session_forget', 'operation_status', 'operation_list', 'operation_wait', 'operation_cancel', 'operation_forget', 'capabilities_register', 'capabilities_list', 'capability_status', 'capability_unregister', 'capability_forget', 'host_requests_take', 'host_request_status', 'host_request_complete')
 
 
 class EmbeddedNativeStatus(IntEnum):
@@ -1874,6 +1874,42 @@ class InputRuntimeCommandSessionForget(TypedDict, total=True):
     type: Literal['session_forget']
 
 
+class _InputRuntimeCommandOperationListRequired(TypedDict, total=True):
+    """
+    Wire fields for _InputRuntimeCommandOperationListRequired; native validation enforces semantic constraints.
+    _InputRuntimeCommandOperationListRequired 的线字段；原生校验负责语义约束。
+    Discover retained operation identities in actual publication order with bounded pagination.
+    按实际发布顺序，通过有界分页发现保留操作身份。
+    """
+    # Positive maximum number of IDs, bounded by the runtime operation retention limit.
+    # 正的身份数量上限，受运行时操作保留上限约束。
+    # Exact wire member limit; required independently of nullability.
+    # 精确线成员 limit；必需与是否可为空值相互独立。
+    limit: int
+    # Exact wire member type; required independently of nullability.
+    # 精确线成员 type；必需与是否可为空值相互独立。
+    type: Literal['operation_list']
+
+
+class InputRuntimeCommandOperationList(_InputRuntimeCommandOperationListRequired, total=False):
+    """
+    Wire fields for InputRuntimeCommandOperationList; native validation enforces semantic constraints.
+    InputRuntimeCommandOperationList 的线字段；原生校验负责语义约束。
+    Discover retained operation identities in actual publication order with bounded pagination.
+    按实际发布顺序，通过有界分页发现保留操作身份。
+    """
+    # Exact retained cursor from the previous page; omitted to restart enumeration.
+    # 上一页的精确保留游标；省略则重新开始枚举。
+    # Exact wire member after_operation_id; omittable independently of nullability.
+    # 精确线成员 after_operation_id；可省略与是否可为空值相互独立。
+    after_operation_id: Union[str, None]
+    # Optional original pool filter, valid even after that pool was forgotten.
+    # 可选原始池过滤条件，即使该池已遗忘仍有效。
+    # Exact wire member pool_id; omittable independently of nullability.
+    # 精确线成员 pool_id；可省略与是否可为空值相互独立。
+    pool_id: Union[str, None]
+
+
 class InputRuntimeCommandOperationStatus(TypedDict, total=True):
     """
     Wire fields for InputRuntimeCommandOperationStatus; native validation enforces semantic constraints.
@@ -2090,7 +2126,7 @@ class InputRuntimeCommandHostRequestComplete(TypedDict, total=True):
 
 # Exact wire shape of InputRuntimeCommand, derived from the packaged core schema.
 # 从包内核心 Schema 派生的 InputRuntimeCommand 精确线形状。
-InputRuntimeCommand: TypeAlias = Union['InputRuntimeCommandOperationPersistenceFailure', 'InputRuntimeCommandOperationRetryCheckpoint', 'InputRuntimeCommandStorageStatus', 'InputRuntimeCommandStorageRecover', 'InputRuntimeCommandStorageWorkerRecover', 'InputRuntimeCommandHistoryGet', 'InputRuntimeCommandHistoryNext', 'InputRuntimeCommandHistoryReconcile', 'InputRuntimeCommandHistoryForget', 'InputRuntimeCommandPluginRegister', 'InputRuntimeCommandPluginStatus', 'InputRuntimeCommandPluginClose', 'InputRuntimeCommandPluginForget', 'InputRuntimeCommandPoolRegister', 'InputRuntimeCommandPoolStatus', 'InputRuntimeCommandPoolClose', 'InputRuntimeCommandPoolForget', 'InputRuntimeCommandPoolRevokePermission', 'InputRuntimeCommandCallSubmit', 'InputRuntimeCommandSessionOpen', 'InputRuntimeCommandSessionSubmit', 'InputRuntimeCommandSessionStatus', 'InputRuntimeCommandSessionClose', 'InputRuntimeCommandSessionForget', 'InputRuntimeCommandOperationStatus', 'InputRuntimeCommandOperationWait', 'InputRuntimeCommandOperationCancel', 'InputRuntimeCommandOperationForget', 'InputRuntimeCommandCapabilitiesRegister', 'InputRuntimeCommandCapabilitiesList', 'InputRuntimeCommandCapabilityStatus', 'InputRuntimeCommandCapabilityUnregister', 'InputRuntimeCommandCapabilityForget', 'InputRuntimeCommandHostRequestsTake', 'InputRuntimeCommandHostRequestStatus', 'InputRuntimeCommandHostRequestComplete']
+InputRuntimeCommand: TypeAlias = Union['InputRuntimeCommandOperationPersistenceFailure', 'InputRuntimeCommandOperationRetryCheckpoint', 'InputRuntimeCommandStorageStatus', 'InputRuntimeCommandStorageRecover', 'InputRuntimeCommandStorageWorkerRecover', 'InputRuntimeCommandHistoryGet', 'InputRuntimeCommandHistoryNext', 'InputRuntimeCommandHistoryReconcile', 'InputRuntimeCommandHistoryForget', 'InputRuntimeCommandPluginRegister', 'InputRuntimeCommandPluginStatus', 'InputRuntimeCommandPluginClose', 'InputRuntimeCommandPluginForget', 'InputRuntimeCommandPoolRegister', 'InputRuntimeCommandPoolStatus', 'InputRuntimeCommandPoolClose', 'InputRuntimeCommandPoolForget', 'InputRuntimeCommandPoolRevokePermission', 'InputRuntimeCommandCallSubmit', 'InputRuntimeCommandSessionOpen', 'InputRuntimeCommandSessionSubmit', 'InputRuntimeCommandSessionStatus', 'InputRuntimeCommandSessionClose', 'InputRuntimeCommandSessionForget', 'InputRuntimeCommandOperationList', 'InputRuntimeCommandOperationStatus', 'InputRuntimeCommandOperationWait', 'InputRuntimeCommandOperationCancel', 'InputRuntimeCommandOperationForget', 'InputRuntimeCommandCapabilitiesRegister', 'InputRuntimeCommandCapabilitiesList', 'InputRuntimeCommandCapabilityStatus', 'InputRuntimeCommandCapabilityUnregister', 'InputRuntimeCommandCapabilityForget', 'InputRuntimeCommandHostRequestsTake', 'InputRuntimeCommandHostRequestStatus', 'InputRuntimeCommandHostRequestComplete']
 
 
 class InputRuntimePersistenceConfig(TypedDict, total=True):
@@ -2897,10 +2933,10 @@ class OutputOperationContextShape453859e05338(TypedDict, total=True):
     kind: Literal['unbound']
 
 
-class OutputOperationContextShape7157ff32ad5b(TypedDict, total=True):
+class _OutputOperationContextShapec1d62297949eRequired(TypedDict, total=True):
     """
-    Wire fields for OutputOperationContextShape7157ff32ad5b; native validation enforces semantic constraints.
-    OutputOperationContextShape7157ff32ad5b 的线字段；原生校验负责语义约束。
+    Wire fields for _OutputOperationContextShapec1d62297949eRequired; native validation enforces semantic constraints.
+    _OutputOperationContextShapec1d62297949eRequired 的线字段；原生校验负责语义约束。
     The formal scheduler froze this module context before publishing the operation.
     正式调度器在发布操作前冻结了此模块上下文。
     """
@@ -2929,9 +2965,23 @@ class OutputOperationContextShape7157ff32ad5b(TypedDict, total=True):
     pool_id: str
 
 
+class OutputOperationContextShapec1d62297949e(_OutputOperationContextShapec1d62297949eRequired, total=False):
+    """
+    Wire fields for OutputOperationContextShapec1d62297949e; native validation enforces semantic constraints.
+    OutputOperationContextShapec1d62297949e 的线字段；原生校验负责语义约束。
+    The formal scheduler froze this module context before publishing the operation.
+    正式调度器在发布操作前冻结了此模块上下文。
+    """
+    # Original VM for an independently admitted finalization; absent for ordinary business and opening work.
+    # 独立入场关闭操作的原 VM；普通业务及开启操作省略。
+    # Exact wire member finalization_instance_id; omittable independently of nullability.
+    # 精确线成员 finalization_instance_id；可省略与是否可为空值相互独立。
+    finalization_instance_id: Union[str, None]
+
+
 # Exact wire shape of OutputOperationContext, derived from the packaged core schema.
 # 从包内核心 Schema 派生的 OutputOperationContext 精确线形状。
-OutputOperationContext: TypeAlias = Union['OutputOperationContextShape453859e05338', 'OutputOperationContextShape7157ff32ad5b']
+OutputOperationContext: TypeAlias = Union['OutputOperationContextShape453859e05338', 'OutputOperationContextShapec1d62297949e']
 
 
 class _OutputOperationFinalizationRequired(TypedDict, total=True):
@@ -3053,6 +3103,30 @@ class OutputOperationOutcomeShape6c96790b057b(TypedDict, total=True):
 # Exact wire shape of OutputOperationOutcome, derived from the packaged core schema.
 # 从包内核心 Schema 派生的 OutputOperationOutcome 精确线形状。
 OutputOperationOutcome: TypeAlias = Union['OutputOperationOutcomeShapefb24a4cb15e9', 'OutputOperationOutcomeShape6c96790b057b']
+
+
+class OutputOperationPage(TypedDict, total=True):
+    """
+    Wire fields for OutputOperationPage; native validation enforces semantic constraints.
+    OutputOperationPage 的线字段；原生校验负责语义约束。
+    One page of retained operation identities; status and effects remain queryable by each exact identity.
+    一页保留操作身份；状态及副作用继续通过各精确身份查询。
+    """
+    # Last returned identity, or the unchanged input cursor for an empty page.
+    # 最后返回的身份；空页保留输入游标。
+    # Exact wire member after_operation_id; required independently of nullability.
+    # 精确线成员 after_operation_id；必需与是否可为空值相互独立。
+    after_operation_id: Union[str, None]
+    # More matching retained records existed during this atomic registry observation.
+    # 此次原子注册表观测期间仍存在更多匹配保留记录。
+    # Exact wire member has_more; required independently of nullability.
+    # 精确线成员 has_more；必需与是否可为空值相互独立。
+    has_more: bool
+    # Identities in admission publication order, independent of reservation and completion order.
+    # 按入场发布顺序排列的身份，独立于预留及完成顺序。
+    # Exact wire member operation_ids; required independently of nullability.
+    # 精确线成员 operation_ids；必需与是否可为空值相互独立。
+    operation_ids: List[str]
 
 
 class OutputOperationPersistenceFailure(TypedDict, total=True):
@@ -4026,6 +4100,30 @@ class OutputRuntimeOperationForgetResponse(TypedDict, total=True):
     status: 'OutputSuccessStatus'
 
 
+class OutputRuntimeOperationListResponse(TypedDict, total=True):
+    """
+    Wire fields for OutputRuntimeOperationListResponse; native validation enforces semantic constraints.
+    OutputRuntimeOperationListResponse 的线字段；原生校验负责语义约束。
+    Borrowed success envelope avoids cloning application output during native response publication.
+    借用成功信封，避免原生响应发布期间克隆应用输出。
+    """
+    # Single protocol version authority.
+    # 唯一协议版本权威。
+    # Exact wire member protocol_version; required independently of nullability.
+    # 精确线成员 protocol_version；必需与是否可为空值相互独立。
+    protocol_version: int
+    # Borrowed result whose owner lives through serialization.
+    # 借用结果，其所有者跨序列化存活。
+    # Exact wire member result; required independently of nullability.
+    # 精确线成员 result；必需与是否可为空值相互独立。
+    result: 'OutputOperationPage'
+    # Exact success discriminator.
+    # 精确成功判别。
+    # Exact wire member status; required independently of nullability.
+    # 精确线成员 status；必需与是否可为空值相互独立。
+    status: 'OutputSuccessStatus'
+
+
 class OutputRuntimeOperationPersistenceFailureResponse(TypedDict, total=True):
     """
     Wire fields for OutputRuntimeOperationPersistenceFailureResponse; native validation enforces semantic constraints.
@@ -4532,4 +4630,4 @@ class OutputRuntimeStorageWorkerRecoverResponse(TypedDict, total=True):
 
 # Public generated type names; metadata remains directly importable by name.
 # 公开生成类型名；元数据仍可按名称直接导入。
-__all__ = ['JsonValue', 'EmbeddedNativeStatus', 'InputCapabilityDescriptor', 'InputCapabilityEffects', 'InputCapabilityExecution', 'InputCapabilityIdempotency', 'InputCapabilityScope', 'InputCommand', 'InputCommandDescribe', 'InputCommandRuntime', 'InputCommandRuntimeClose', 'InputCommandRuntimeFree', 'InputCommandRuntimeInitialize', 'InputCommandRuntimeReserve', 'InputCommandRuntimeStatus', 'InputEffectState', 'InputEmbeddedCall', 'InputEmbeddedError', 'InputEmbeddedErrorCode', 'InputEmbeddedPluginConfig', 'InputEmbeddedRuntimeConfig', 'InputExecutionBackend', 'InputHistoryCursor', 'InputHostCompletion', 'InputHostCompletionShape89b6ef9bf484', 'InputHostCompletionShapeb9f2ee658336', 'InputHostEffectReconciliation', 'InputInstanceReuse', 'InputLuaEngineOptions', 'InputLuaInvocationContext', 'InputLuaRuntimeCapabilityOptions', 'InputLuaRuntimeDatabaseCallbackMode', 'InputLuaRuntimeDatabaseProviderMode', 'InputLuaRuntimeHostOptions', 'InputLuaRuntimeManagedRuntimeConfig', 'InputLuaRuntimeRunLuaPoolConfig', 'InputLuaRuntimeSpaceControllerOptions', 'InputLuaRuntimeSpaceControllerProcessMode', 'InputLuaVmPoolConfig', 'InputModuleDefinition', 'InputModuleExport', 'InputModuleFinalizer', 'InputOperationJournalConfig', 'InputOperationJournalWorkerConfig', 'InputOperationReconciliation', 'InputPluginPoolConfig', 'InputPoolKind', 'InputReconciledExecution', 'InputRequest', 'InputResolvedEffectState', 'InputRuntimeClientInfo', 'InputRuntimeCommand', 'InputRuntimeCommandCallSubmit', 'InputRuntimeCommandCapabilitiesList', 'InputRuntimeCommandCapabilitiesRegister', 'InputRuntimeCommandCapabilityForget', 'InputRuntimeCommandCapabilityStatus', 'InputRuntimeCommandCapabilityUnregister', 'InputRuntimeCommandHistoryForget', 'InputRuntimeCommandHistoryGet', 'InputRuntimeCommandHistoryNext', 'InputRuntimeCommandHistoryReconcile', 'InputRuntimeCommandHostRequestComplete', 'InputRuntimeCommandHostRequestStatus', 'InputRuntimeCommandHostRequestsTake', 'InputRuntimeCommandOperationCancel', 'InputRuntimeCommandOperationForget', 'InputRuntimeCommandOperationPersistenceFailure', 'InputRuntimeCommandOperationRetryCheckpoint', 'InputRuntimeCommandOperationStatus', 'InputRuntimeCommandOperationWait', 'InputRuntimeCommandPluginClose', 'InputRuntimeCommandPluginForget', 'InputRuntimeCommandPluginRegister', 'InputRuntimeCommandPluginStatus', 'InputRuntimeCommandPoolClose', 'InputRuntimeCommandPoolForget', 'InputRuntimeCommandPoolRegister', 'InputRuntimeCommandPoolRevokePermission', 'InputRuntimeCommandPoolStatus', 'InputRuntimeCommandSessionClose', 'InputRuntimeCommandSessionForget', 'InputRuntimeCommandSessionOpen', 'InputRuntimeCommandSessionStatus', 'InputRuntimeCommandSessionSubmit', 'InputRuntimeCommandStorageRecover', 'InputRuntimeCommandStorageStatus', 'InputRuntimeCommandStorageWorkerRecover', 'InputRuntimePersistenceConfig', 'InputRuntimeRequestContext', 'InputToolCacheConfig', 'OutputCapabilityCaller', 'OutputCapabilityDescriptor', 'OutputCapabilityEffects', 'OutputCapabilityExecution', 'OutputCapabilityIdempotency', 'OutputCapabilityRegistrationStatus', 'OutputCapabilityScope', 'OutputCheckpointRetryState', 'OutputCoreDescription', 'OutputEffectState', 'OutputEmbeddedBuildIdentity', 'OutputEmbeddedError', 'OutputEmbeddedErrorCode', 'OutputEmbeddedPluginConfig', 'OutputEmbeddedPluginSnapshot', 'OutputEmbeddedRuntimeUsage', 'OutputEmbeddedSessionPhase', 'OutputEmbeddedSessionSnapshot', 'OutputErrorResponse', 'OutputErrorStatus', 'OutputExecutionBackend', 'OutputHostEffectPhase', 'OutputHostEffectReconciliation', 'OutputHostEffectRecord', 'OutputHostRequest', 'OutputHostRequestPhase', 'OutputHostRequestStatus', 'OutputInitializationPhase', 'OutputJournalOperation', 'OutputOperationContext', 'OutputOperationContextShape453859e05338', 'OutputOperationContextShape7157ff32ad5b', 'OutputOperationFinalization', 'OutputOperationJournalWorkerStatus', 'OutputOperationOutcome', 'OutputOperationOutcomeShape6c96790b057b', 'OutputOperationOutcomeShapefb24a4cb15e9', 'OutputOperationPersistenceFailure', 'OutputOperationPhase', 'OutputOperationReceipt', 'OutputOperationReconciliation', 'OutputOperationSnapshot', 'OutputPoolReceipt', 'OutputPoolUsage', 'OutputReconciledExecution', 'OutputRegistrationReceipt', 'OutputResolvedEffectState', 'OutputRootDescribeResponse', 'OutputRootRuntimeCloseResponse', 'OutputRootRuntimeFreeResponse', 'OutputRootRuntimeInitializeResponse', 'OutputRootRuntimeReserveResponse', 'OutputRootRuntimeStatusResponse', 'OutputRuntimeCallSubmitResponse', 'OutputRuntimeCapabilitiesListResponse', 'OutputRuntimeCapabilitiesRegisterResponse', 'OutputRuntimeCapabilityForgetResponse', 'OutputRuntimeCapabilityStatusResponse', 'OutputRuntimeCapabilityUnregisterResponse', 'OutputRuntimeHistoryForgetResponse', 'OutputRuntimeHistoryGetResponse', 'OutputRuntimeHistoryNextResponse', 'OutputRuntimeHistoryReconcileResponse', 'OutputRuntimeHostRequestCompleteResponse', 'OutputRuntimeHostRequestStatusResponse', 'OutputRuntimeHostRequestsTakeResponse', 'OutputRuntimeOperationCancelResponse', 'OutputRuntimeOperationForgetResponse', 'OutputRuntimeOperationPersistenceFailureResponse', 'OutputRuntimeOperationRetryCheckpointResponse', 'OutputRuntimeOperationStatusResponse', 'OutputRuntimeOperationWaitResponse', 'OutputRuntimePluginCloseResponse', 'OutputRuntimePluginForgetResponse', 'OutputRuntimePluginRegisterResponse', 'OutputRuntimePluginStatusResponse', 'OutputRuntimePoolCloseResponse', 'OutputRuntimePoolForgetResponse', 'OutputRuntimePoolRegisterResponse', 'OutputRuntimePoolRevokePermissionResponse', 'OutputRuntimePoolStatusResponse', 'OutputRuntimeReceipt', 'OutputRuntimeSessionCloseResponse', 'OutputRuntimeSessionForgetResponse', 'OutputRuntimeSessionOpenResponse', 'OutputRuntimeSessionStatusResponse', 'OutputRuntimeSessionSubmitResponse', 'OutputRuntimeSnapshot', 'OutputRuntimeStorageRecoverResponse', 'OutputRuntimeStorageStatusResponse', 'OutputRuntimeStorageWorkerRecoverResponse', 'OutputSessionReceipt', 'OutputSuccessStatus', 'OutputTransportConfig', 'OutputTransportDescription']
+__all__ = ['JsonValue', 'EmbeddedNativeStatus', 'InputCapabilityDescriptor', 'InputCapabilityEffects', 'InputCapabilityExecution', 'InputCapabilityIdempotency', 'InputCapabilityScope', 'InputCommand', 'InputCommandDescribe', 'InputCommandRuntime', 'InputCommandRuntimeClose', 'InputCommandRuntimeFree', 'InputCommandRuntimeInitialize', 'InputCommandRuntimeReserve', 'InputCommandRuntimeStatus', 'InputEffectState', 'InputEmbeddedCall', 'InputEmbeddedError', 'InputEmbeddedErrorCode', 'InputEmbeddedPluginConfig', 'InputEmbeddedRuntimeConfig', 'InputExecutionBackend', 'InputHistoryCursor', 'InputHostCompletion', 'InputHostCompletionShape89b6ef9bf484', 'InputHostCompletionShapeb9f2ee658336', 'InputHostEffectReconciliation', 'InputInstanceReuse', 'InputLuaEngineOptions', 'InputLuaInvocationContext', 'InputLuaRuntimeCapabilityOptions', 'InputLuaRuntimeDatabaseCallbackMode', 'InputLuaRuntimeDatabaseProviderMode', 'InputLuaRuntimeHostOptions', 'InputLuaRuntimeManagedRuntimeConfig', 'InputLuaRuntimeRunLuaPoolConfig', 'InputLuaRuntimeSpaceControllerOptions', 'InputLuaRuntimeSpaceControllerProcessMode', 'InputLuaVmPoolConfig', 'InputModuleDefinition', 'InputModuleExport', 'InputModuleFinalizer', 'InputOperationJournalConfig', 'InputOperationJournalWorkerConfig', 'InputOperationReconciliation', 'InputPluginPoolConfig', 'InputPoolKind', 'InputReconciledExecution', 'InputRequest', 'InputResolvedEffectState', 'InputRuntimeClientInfo', 'InputRuntimeCommand', 'InputRuntimeCommandCallSubmit', 'InputRuntimeCommandCapabilitiesList', 'InputRuntimeCommandCapabilitiesRegister', 'InputRuntimeCommandCapabilityForget', 'InputRuntimeCommandCapabilityStatus', 'InputRuntimeCommandCapabilityUnregister', 'InputRuntimeCommandHistoryForget', 'InputRuntimeCommandHistoryGet', 'InputRuntimeCommandHistoryNext', 'InputRuntimeCommandHistoryReconcile', 'InputRuntimeCommandHostRequestComplete', 'InputRuntimeCommandHostRequestStatus', 'InputRuntimeCommandHostRequestsTake', 'InputRuntimeCommandOperationCancel', 'InputRuntimeCommandOperationForget', 'InputRuntimeCommandOperationList', 'InputRuntimeCommandOperationPersistenceFailure', 'InputRuntimeCommandOperationRetryCheckpoint', 'InputRuntimeCommandOperationStatus', 'InputRuntimeCommandOperationWait', 'InputRuntimeCommandPluginClose', 'InputRuntimeCommandPluginForget', 'InputRuntimeCommandPluginRegister', 'InputRuntimeCommandPluginStatus', 'InputRuntimeCommandPoolClose', 'InputRuntimeCommandPoolForget', 'InputRuntimeCommandPoolRegister', 'InputRuntimeCommandPoolRevokePermission', 'InputRuntimeCommandPoolStatus', 'InputRuntimeCommandSessionClose', 'InputRuntimeCommandSessionForget', 'InputRuntimeCommandSessionOpen', 'InputRuntimeCommandSessionStatus', 'InputRuntimeCommandSessionSubmit', 'InputRuntimeCommandStorageRecover', 'InputRuntimeCommandStorageStatus', 'InputRuntimeCommandStorageWorkerRecover', 'InputRuntimePersistenceConfig', 'InputRuntimeRequestContext', 'InputToolCacheConfig', 'OutputCapabilityCaller', 'OutputCapabilityDescriptor', 'OutputCapabilityEffects', 'OutputCapabilityExecution', 'OutputCapabilityIdempotency', 'OutputCapabilityRegistrationStatus', 'OutputCapabilityScope', 'OutputCheckpointRetryState', 'OutputCoreDescription', 'OutputEffectState', 'OutputEmbeddedBuildIdentity', 'OutputEmbeddedError', 'OutputEmbeddedErrorCode', 'OutputEmbeddedPluginConfig', 'OutputEmbeddedPluginSnapshot', 'OutputEmbeddedRuntimeUsage', 'OutputEmbeddedSessionPhase', 'OutputEmbeddedSessionSnapshot', 'OutputErrorResponse', 'OutputErrorStatus', 'OutputExecutionBackend', 'OutputHostEffectPhase', 'OutputHostEffectReconciliation', 'OutputHostEffectRecord', 'OutputHostRequest', 'OutputHostRequestPhase', 'OutputHostRequestStatus', 'OutputInitializationPhase', 'OutputJournalOperation', 'OutputOperationContext', 'OutputOperationContextShape453859e05338', 'OutputOperationContextShapec1d62297949e', 'OutputOperationFinalization', 'OutputOperationJournalWorkerStatus', 'OutputOperationOutcome', 'OutputOperationOutcomeShape6c96790b057b', 'OutputOperationOutcomeShapefb24a4cb15e9', 'OutputOperationPage', 'OutputOperationPersistenceFailure', 'OutputOperationPhase', 'OutputOperationReceipt', 'OutputOperationReconciliation', 'OutputOperationSnapshot', 'OutputPoolReceipt', 'OutputPoolUsage', 'OutputReconciledExecution', 'OutputRegistrationReceipt', 'OutputResolvedEffectState', 'OutputRootDescribeResponse', 'OutputRootRuntimeCloseResponse', 'OutputRootRuntimeFreeResponse', 'OutputRootRuntimeInitializeResponse', 'OutputRootRuntimeReserveResponse', 'OutputRootRuntimeStatusResponse', 'OutputRuntimeCallSubmitResponse', 'OutputRuntimeCapabilitiesListResponse', 'OutputRuntimeCapabilitiesRegisterResponse', 'OutputRuntimeCapabilityForgetResponse', 'OutputRuntimeCapabilityStatusResponse', 'OutputRuntimeCapabilityUnregisterResponse', 'OutputRuntimeHistoryForgetResponse', 'OutputRuntimeHistoryGetResponse', 'OutputRuntimeHistoryNextResponse', 'OutputRuntimeHistoryReconcileResponse', 'OutputRuntimeHostRequestCompleteResponse', 'OutputRuntimeHostRequestStatusResponse', 'OutputRuntimeHostRequestsTakeResponse', 'OutputRuntimeOperationCancelResponse', 'OutputRuntimeOperationForgetResponse', 'OutputRuntimeOperationListResponse', 'OutputRuntimeOperationPersistenceFailureResponse', 'OutputRuntimeOperationRetryCheckpointResponse', 'OutputRuntimeOperationStatusResponse', 'OutputRuntimeOperationWaitResponse', 'OutputRuntimePluginCloseResponse', 'OutputRuntimePluginForgetResponse', 'OutputRuntimePluginRegisterResponse', 'OutputRuntimePluginStatusResponse', 'OutputRuntimePoolCloseResponse', 'OutputRuntimePoolForgetResponse', 'OutputRuntimePoolRegisterResponse', 'OutputRuntimePoolRevokePermissionResponse', 'OutputRuntimePoolStatusResponse', 'OutputRuntimeReceipt', 'OutputRuntimeSessionCloseResponse', 'OutputRuntimeSessionForgetResponse', 'OutputRuntimeSessionOpenResponse', 'OutputRuntimeSessionStatusResponse', 'OutputRuntimeSessionSubmitResponse', 'OutputRuntimeSnapshot', 'OutputRuntimeStorageRecoverResponse', 'OutputRuntimeStorageStatusResponse', 'OutputRuntimeStorageWorkerRecoverResponse', 'OutputSessionReceipt', 'OutputSuccessStatus', 'OutputTransportConfig', 'OutputTransportDescription']
