@@ -28,7 +28,7 @@ EMBEDDED_CORE_VERSION = '0.5.9'
 
 # Generated contract metadata: EMBEDDED_CONTRACT_SHA256.
 # 生成的契约元数据：EMBEDDED_CONTRACT_SHA256。
-EMBEDDED_CONTRACT_SHA256 = 'ccb8c75c26b271cdcb90d75d7d724ed7f38624cb4cc63663282f82878a8ee4d9'
+EMBEDDED_CONTRACT_SHA256 = '635f47f2884420e36876114474310bf197c9d2941204f626b5255f1e885c55b8'
 
 # Generated contract metadata: EMBEDDED_DESCRIPTION_VERSION.
 # 生成的契约元数据：EMBEDDED_DESCRIPTION_VERSION。
@@ -2575,6 +2575,11 @@ class OutputEmbeddedPluginSnapshot(TypedDict, total=True):
     # Exact wire member queued_calls; required independently of nullability.
     # 精确线成员 queued_calls；必需与是否可为空值相互独立。
     queued_calls: int
+    # Capacity reserved for closing long-lived instances, before their operation identities become queryable.
+    # 为关闭长生命周期实例预留的容量，此时相应操作身份尚不可查询。
+    # Exact wire member reserved_operations; required independently of nullability.
+    # 精确线成员 reserved_operations；必需与是否可为空值相互独立。
+    reserved_operations: int
     # Actual resident VM counters through confirmed destruction.
     # 持续记账到确认销毁的实际常驻 VM 计数。
     # Exact wire member resources; required independently of nullability.
@@ -2648,11 +2653,16 @@ class OutputEmbeddedSessionSnapshot(TypedDict, total=True):
     # Exact wire member active_operation; required independently of nullability.
     # 精确线成员 active_operation；必需与是否可为空值相互独立。
     active_operation: Union[str, None]
-    # First execution failure that made the session unusable.
-    # 导致会话不可用的首次执行错误。
+    # First business or closing failure; a later cleanup error cannot replace the original failure.
+    # 首次业务或关闭错误；后续清理错误不能替换原始错误。
     # Exact wire member error; required independently of nullability.
     # 精确线成员 error；必需与是否可为空值相互独立。
     error: Union['OutputEmbeddedError', None]
+    # Independently retained closing operation; absent until eligible session cleanup is scheduled.
+    # 独立保留的关闭操作；符合条件的会话清理被调度前省略。
+    # Exact wire member finalization_operation; required independently of nullability.
+    # 精确线成员 finalization_operation；必需与是否可为空值相互独立。
+    finalization_operation: Union[str, None]
     # Current lifecycle observation.
     # 当前生命周期观测。
     # Exact wire member phase; required independently of nullability.

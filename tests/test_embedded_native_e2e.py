@@ -90,10 +90,10 @@ class EmbeddedNativeFixture:
         """
         return self.transport.request({"type":"runtime", "runtime_id":self.runtime_id, "operation":operation})
 
-    def pool(self, source, finalizer=None):
+    def pool(self, source, finalizer=None, session=False):
         """
-        Register immutable source, using single-call policy only when an explicit finalizer is supplied.
-        注册不可变源码，仅在提供显式 finalizer 时使用单次调用策略。
+        Register source with an optional finalizer; session=True explicitly selects a pinned instance.
+        注册源码及可选关闭回调；session=True 显式选择固定实例。
         """
         request = {"type":"pool_register", "definition":{
             "plugin_id":self.plugin_id, "generation":"python-generation-1",
@@ -109,6 +109,8 @@ class EmbeddedNativeFixture:
             request["definition"]["finalizer"] = finalizer
             request["definition"]["exports"].append({"name":finalizer["export"], "input_schema":True, "output_schema":True})
             request["policy"]["reuse"] = "single_call"
+        if session:
+            request["policy"]["reuse"] = "session"
         return self.command(request)["pool_id"]
 
     def submit(self, pool_id, arguments):
@@ -164,6 +166,39 @@ class EmbeddedNativeIntegrationTests(EmbeddedNativeFixture, unittest.TestCase):
                     self.assertEqual(stages["outcome"], {"status":"succeeded", "value":None})
                     self.assertIn("value", snapshot)
                     self.assertIsNone(snapshot["value"])
+
+    def test_session_finalization_has_independent_queryable_operation(self):
+        """
+        Retain business results while observing reserved capacity and the session's independent closing outcome.
+        保留业务结果，同时观察预留容量及会话独立关闭结果。
+        """
+        pool_id = self.pool(
+            "local n=0; return {call=function() n=n+1; return tostring(n) end, shutdown=function() return tostring(n) end}",
+            {"export":"shutdown", "arguments":None, "timeout_ms":1000}, session=True,
+        )
+        opening = self.command({"type":"session_open", "pool_id":pool_id, "timeout_ms":5000})
+        self.assertEqual(self.terminal(opening["operation_id"])["phase"], "succeeded")
+        session_id = opening["session_id"]
+        self.assertEqual(self.command({"type":"plugin_status", "plugin_id":self.plugin_id})["reserved_operations"], 1)
+        operation_id = self.command({"type":"session_submit", "session_id":session_id, "export":"call",
+            "arguments":None, "context":{"request_context":None, "client_budget":None, "tool_config":None}, "timeout_ms":5000})["operation_id"]
+        business = self.terminal(operation_id)
+        self.assertEqual(business["value"], "1")
+        self.command({"type":"session_close", "session_id":session_id})
+        deadline = time.monotonic() + 5
+        while True:
+            session = self.command({"type":"session_status", "session_id":session_id})
+            if session["phase"] == "closed":
+                break
+            self.assertLess(time.monotonic(), deadline, session)
+            time.sleep(0.001)
+        self.assertNotEqual(session["finalization_operation"], operation_id)
+        closing = self.terminal(session["finalization_operation"])
+        self.assertEqual(closing["phase"], "succeeded")
+        self.assertEqual(closing["finalization"]["business"], {"status":"succeeded", "value":None})
+        self.assertEqual(closing["finalization"]["outcome"], {"status":"succeeded", "value":"1"})
+        self.assertEqual(self.command({"type":"operation_status", "operation_id":operation_id}), business)
+        self.assertEqual(self.command({"type":"plugin_status", "plugin_id":self.plugin_id})["reserved_operations"], 0)
 
     def test_actual_lua_state_json_types_and_native_lifecycle(self):
         """
