@@ -218,6 +218,7 @@ class EmbeddedClientNativeTests(EmbeddedNativeFixture, unittest.TestCase):
         namespace = self.take(self.runtime.status())["core_runtime_id"]
         self.assertIsNotNone(self.take(self.runtime.status())["persistence"])
         self.assertFalse(self.take(self.runtime.recover_storage()))
+        self.assertFalse(self.take(self.runtime.recover_storage_worker()))
         self.assertFalse(self.take(self.runtime.storage_status())["closing"])
         # No callback is needed to retain the exact module admission context.
         # 保留精确模块入场上下文不需要回调。

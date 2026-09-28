@@ -207,6 +207,17 @@ class EmbeddedRuntime:
         """
         return self._submit({"type": "storage_recover"}, lambda value: value)
 
+    def recover_storage_worker(self) -> EmbeddedPending[bool]:
+        """
+        Rebuild one failed, actually exited writer on the work lane; return False for a healthy running writer.
+        在工作通道重建一个已失败且实际退出的写入者；健康运行写入者返回 False。
+        Old receipts and budgets remain owned; storage recovery and original checkpoint retry are separate actions.
+        旧回执及预算继续被拥有；存储恢复及原检查点重试是独立操作。
+        Explicit writer closure and unproven or poisoned ownership remain errors rather than implicit reopening.
+        显式写入者关闭及未证实或中毒所有权保持错误，不能隐式重新打开。
+        """
+        return self._submit({"type": "storage_worker_recover"}, lambda value: value)
+
     def history_get(self, history_runtime_id: str, operation_id: str) -> EmbeddedPending[wire.OutputJournalOperation | None]:
         """
         Read one original history_runtime_id/operation_id on the work lane; absence is not proof of no execution.
