@@ -178,6 +178,12 @@ class EmbeddedClientNativeTests(EmbeddedNativeFixture, unittest.TestCase):
         outcome = operation.wait(5)
         self.assertEqual(outcome["value"], {"unicode": "类型回执", "null": None})
         self.assertEqual(outcome["operation_id"], operation.operation_id)
+        self.assertEqual(outcome["context"]["kind"], "module")
+        self.assertEqual(outcome["context"]["pool_id"], pool.pool_id)
+        self.assertEqual(outcome["context"]["caller"]["plugin_id"], self.plugin_id)
+        self.assertEqual(outcome["context"]["caller"]["operation_id"], operation.operation_id)
+        self.assertEqual(outcome["context"]["export"], "call")
+        self.assertEqual(outcome["host_effects"], [])
         self.assertFalse(self.take(operation.cancel()))
         self.assertEqual(self.take(operation.status()), outcome)
         self.take(operation.forget())
@@ -201,11 +207,23 @@ class EmbeddedClientNativeTests(EmbeddedNativeFixture, unittest.TestCase):
         pool = self.make_pool("local count=0; return {call=function(a) count=count+1; return count end}",
                               reuse="session", kind="dedicated")
         opening = self.take(pool.open_session(10000))
-        self.assertEqual(opening.initialization.wait(5)["phase"], "succeeded")
+        # Session opening has its own trusted identity before any exported call or callback.
+        # 在任何导出调用或回调前，会话开启已拥有自身可信身份。
+        initialized = opening.initialization.wait(5)
+        self.assertEqual(initialized["phase"], "succeeded")
+        self.assertEqual(initialized["context"]["kind"], "module")
+        self.assertEqual(initialized["context"]["caller"]["session_id"], opening.session.session_id)
+        self.assertIsNone(initialized["context"]["export"])
         self.assertEqual(self.take(opening.session.status())["pool_id"], pool.pool_id)
         for expected in (1, 2):
             operation = self.take(opening.session.submit("call", None, self.context, 10000))
-            self.assertEqual(operation.wait(5)["value"], expected)
+            # A later operation keeps the pinned session while acquiring a new operation identity.
+            # 后续操作保持固定会话，同时取得新的操作身份。
+            completed = operation.wait(5)
+            self.assertEqual(completed["value"], expected)
+            self.assertEqual(completed["context"]["caller"]["operation_id"], operation.operation_id)
+            self.assertEqual(completed["context"]["caller"]["session_id"], opening.session.session_id)
+            self.assertEqual(completed["context"]["export"], "call")
             self.take(operation.forget())
         self.take(opening.initialization.forget())
         self.take(opening.session.request_close())
