@@ -417,6 +417,8 @@ finally:
 
 `EmbeddedClient(driver)` 使用生成输入输出类型，提供运行时、插件、池、会话及操作句柄。原生命令立即返回 `EmbeddedPending[T]`，通过 `result(timeout=...)` 或 `await result_async()` 观察；即使先前观察者被取消，两者仍观察同一命令。`pending.receipt` 暴露精确驱动器回执。处理交付后显式调用 `pending.forget()` 归还 SDK 配额。结果释放失败后可用 `pending.delivered_result()` 投影已复制成功响应，不重新提交；原生缓冲恢复仍须执行 `transport.release_results()`。
 
+`runtime.register_capacity(plugin_id, config)` 返回待确认的 `EmbeddedCapacity`；`runtime.capacity(capacity_id)` 绑定已知精确身份。显式提供 `resources` 及聚合 `max_queued_calls`、`max_queued_bytes`。`capacity.register_pool(...)` 要求相同插件归属、池类别、成员最小值为零且上限不超过容量。成员共享聚合预留及入场额度，各自保留 Lua 状态、模块代次和能力快照；既有 `runtime.register_pool(...)` 保持独立归属。`status()`、`request_close()`、`forget()` 使用预留控制通道。关闭排空成员，必须逐个显式遗忘已关闭且排空的成员后才能遗忘容量；空容量仍保留最小预留，不代表自动预热了 VM。此开发功能要求匹配的 `capacity_groups_v1` 契约及原生库。
+
 运行时反射注解使用 `typing.get_type_hints(method, localns=vars(luaskills.embedded_contract))`：导入的递归别名在支持的 Python 版本下需要其定义命名空间。静态类型检查直接使用生成声明；分发验证器同时检查实际 wheel 中的声明及上述显式解析的方法注解。
 
 先用 `client.reserve()` 取得运行时句柄，再调用其单次 `initialize(engine_options, runtime_config)`。初始化回执确认的是尝试；始终查询 `status()` 区分 `ready`、`failed`、`faulted` 并读取保留错误。初始化观察中断后保留该身份并查询状态，不重新构造。`client.runtime(id)` 及运行时的 `plugin(id)`、`pool(id)`、`session(id)`、`operation(id)` 仅绑定已知身份，不探测、不声称就绪；后续原生命令校验存在性及归属。

@@ -423,6 +423,71 @@ class EmbeddedClientNativeTests(EmbeddedNativeFixture, unittest.TestCase):
         revision = self.take(self.runtime.history_reconcile(namespace, second.operation_id, failed_history["revision"], failed_resolution))
         self.take(self.runtime.history_forget(namespace, second.operation_id, revision))
 
+    def test_capacity_handle_preserves_members_and_explicit_release(self):
+        """
+        Exercise generated capacity types, typed members and actual DLL release without duplicating guarantees.
+        验证生成容量类型、类型化成员及实际 DLL 释放，不重复保证。
+        """
+        # The capacity reserves one slot and allows two isolated module residents.
+        # 容量预留一个槽位，允许两个隔离模块常驻。
+        config = {"resources": {"kind": "dedicated", "min_resident_vms": 1,
+                               "max_resident_vms": 2, "max_running_calls": 1},
+                  "max_queued_calls": 4, "max_queued_bytes": self.runtime_limits["max_queued_bytes"]}
+        # Projection happens only after actual registration acknowledgement.
+        # 仅在实际注册确认后投影。
+        capacity = self.take(self.runtime.register_capacity(self.plugin_id, config))
+        self.assertEqual(self.runtime.capacity(capacity.capacity_id).capacity_id, capacity.capacity_id)
+        self.assertEqual(self.take(capacity.status())["committed_resident_vms"], 1)
+        # Each module owns its state under the aggregate zero-duplicate-reservation policy.
+        # 各模块在聚合零重复预留策略下拥有自身状态。
+        pools = []
+        for generation in ("first", "second"):
+            # Native registration freezes this exact generation and security partition.
+            # 原生注册冻结此精确代次及安全分区。
+            definition = {"plugin_id": self.plugin_id, "generation": generation,
+                          "package_root": self.package_root.as_posix(), "dependencies_file": "dependencies.yaml",
+                          "workspace_root": None, "cwd": None, "mounts": {}, "security_partition": "python-test",
+                          "source": """-- Keep state private to this exact module instance.
+-- 将状态保持在此精确模块实例内。
+local count=0
+-- Return the next count without arguments or external effects.
+-- 返回下一个计数，不使用参数或产生外部副作用。
+return {call=function() count=count+1; return count end}""",
+                          "exports": [{"name": "call", "input_schema": True, "output_schema": True}]}
+            # The member declares no independent minimum.
+            # 成员不声明独立最小值。
+            policy = {"kind": "dedicated", "min_resident_vms": 0, "max_resident_vms": 1,
+                      "max_running_calls": 1, "max_queued_calls": 4, "reuse": "reusable",
+                      "serial": False, "backend": "in_process", "idle_ttl_ms": None, "max_uses": None}
+            pools.append(self.take(capacity.register_pool(definition, policy, [], generation)))
+        for pool in pools:
+            for expected in (1, 2):
+                # Native operation identity remains separate from the SDK submission receipt.
+                # 原生操作身份与 SDK 提交回执保持区分。
+                operation = self.take(pool.submit("call", None, self.context, 5000))
+                self.assertEqual(operation.wait(5)["value"], expected)
+                self.take(operation.forget())
+        self.assertEqual(self.take(capacity.status())["resources"]["resident"], 2)
+        self.take(capacity.request_close())
+        # Closed capacity cannot be forgotten while exact member identities remain.
+        # 精确成员身份仍在时，已关闭容量不能被遗忘。
+        blocked = capacity.forget()
+        with self.assertRaises(EmbeddedRuntimeError) as failure:
+            blocked.result(5)
+        self.assertEqual(failure.exception.code, "busy")
+        blocked.forget()
+        # Observe actual retirement before explicitly removing member metadata.
+        # 显式移除成员元数据前观测实际退役。
+        deadline = time.monotonic() + 5
+        while self.take(capacity.status())["resources"]["resident"]:
+            self.assertLess(time.monotonic(), deadline)
+            time.sleep(0.001)
+        for pool in pools:
+            self.take(pool.forget())
+        self.assertEqual(self.take(capacity.status())["committed_resident_vms"], 1)
+        self.take(capacity.forget())
+        self.assertEqual(self.take(self.runtime.plugin(self.plugin_id).status())["committed_resident_vms"], 0)
+
     def test_shared_pool_calls_preserve_results_errors_and_explicit_forgetting(self):
         """
         Execute successful and failing Lua calls through typed handles; preserve snapshots until explicit forget.

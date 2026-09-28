@@ -277,6 +277,23 @@ class EmbeddedRuntime:
         """
         return self._submit({"type": "plugin_register", "plugin_id": plugin_id, "config": config}, lambda _: self.plugin(plugin_id))
 
+    def register_capacity(self, plugin_id: str, config: wire.InputEmbeddedCapacityConfig) -> EmbeddedPending[EmbeddedCapacity]:
+        """
+        Register complete config for exact plugin_id and return its acknowledged capacity handle.
+        为精确 plugin_id 注册完整 config，并返回已确认容量句柄。
+        Receipt observation never repeats registration or changes the immutable capacity owner.
+        回执观测绝不重复注册，也不改变不可变容量所有者。
+        """
+        return self._submit({"type": "capacity_register", "plugin_id": plugin_id, "config": config},
+                            lambda value: self.capacity(value["capacity_id"]))
+
+    def capacity(self, capacity_id: str) -> EmbeddedCapacity:
+        """
+        Bind exact capacity_id to this runtime without probing or inferring ownership; return its handle.
+        将精确 capacity_id 绑定到此运行时，不探测或推断归属；返回其句柄。
+        """
+        return EmbeddedCapacity(self, capacity_id)
+
     def register_pool(self, definition: wire.InputModuleDefinition, policy: wire.InputPluginPoolConfig,
                       permissions: list[str], execution_revision: str) -> EmbeddedPending[EmbeddedPool]:
         """
@@ -374,6 +391,71 @@ class EmbeddedPlugin:
         请求移除已排空的原生插件记录；原生忙碌错误保留其所有权。
         """
         return self._runtime._submit({"type": "plugin_forget", "plugin_id": self.plugin_id}, lambda value: value)
+
+
+class EmbeddedCapacity:
+    """
+    Immutable capacity identity shared by isolated member modules within one native plugin.
+    一个原生插件内由隔离成员模块共享的不可变容量身份。
+    Closure and forgetting remain distinct; the core owns physical and scheduling guarantees.
+    关闭与遗忘保持区分；核心拥有物理及调度保证。
+    """
+
+    def __init__(self, runtime: EmbeddedRuntime, capacity_id: str) -> None:
+        """
+        Bind runtime and exact capacity_id; return without registering or probing native state.
+        绑定 runtime 及精确 capacity_id；返回时不注册或探测原生状态。
+        """
+        # Every member and control request remains in this original runtime namespace.
+        # 每个成员及控制请求保持在此原始运行时命名空间内。
+        self._runtime = runtime
+        # The identity never switches to another capacity on failure or plugin update.
+        # 失败或插件更新时，身份绝不切换到另一容量。
+        self._capacity_id = capacity_id
+
+    @property
+    def capacity_id(self) -> str:
+        """
+        Return the original native capacity identity, independent of command receipt identity.
+        返回原生容量身份，独立于命令回执身份。
+        """
+        return self._capacity_id
+
+    def status(self) -> EmbeddedPending[wire.OutputEmbeddedCapacitySnapshot]:
+        """
+        Return live native physical, queued and cleanup ownership on the reserved control lane.
+        在预留控制通道返回实时原生物理、排队及清理归属。
+        """
+        return self._runtime._submit({"type": "capacity_status", "capacity_id": self.capacity_id}, lambda value: value)
+
+    def request_close(self) -> EmbeddedPending[None]:
+        """
+        Permanently close capacity admission and request member drainage; return acknowledgement only.
+        永久关闭容量入场并请求成员排空；仅返回确认。
+        """
+        return self._runtime._submit({"type": "capacity_close", "capacity_id": self.capacity_id}, lambda value: value)
+
+    def forget(self) -> EmbeddedPending[None]:
+        """
+        Request exact capacity removal; return acknowledgement only after the core proves release eligible.
+        请求精确容量移除；仅在核心证明符合释放条件后返回确认。
+        Members must be forgotten first; a busy response never switches or recreates the capacity.
+        必须先遗忘成员；忙碌响应绝不切换或重建容量。
+        """
+        return self._runtime._submit({"type": "capacity_forget", "capacity_id": self.capacity_id}, lambda value: value)
+
+    def register_pool(self, definition: wire.InputModuleDefinition, policy: wire.InputPluginPoolConfig,
+                      permissions: list[str], execution_revision: str) -> EmbeddedPending[EmbeddedPool]:
+        """
+        Register definition with policy, permissions and execution_revision in this exact capacity.
+        使用 policy、permissions 及 execution_revision 在此精确容量中注册 definition。
+        Return the acknowledged member handle; native validation rejects foreign plugins and conflicting budgets.
+        返回已确认成员句柄；原生校验拒绝外来插件及冲突预算。
+        """
+        return self._runtime._submit({"type": "pool_register", "capacity_id": self.capacity_id,
+                                     "definition": definition, "policy": policy, "permissions": permissions,
+                                     "execution_revision": execution_revision},
+                                    lambda value: self._runtime.pool(value["pool_id"]))
 
 
 class EmbeddedPool:

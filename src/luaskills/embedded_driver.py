@@ -24,6 +24,7 @@ from .embedded_transport import EMBEDDED_CONTROL_WORKERS, EmbeddedRuntimeError, 
 # 这些短生命周期查询／变更拥有独立通道；新增业务命令使用工作通道。
 _ROOT_CONTROLS = frozenset({"describe", "runtime_status", "runtime_close", "runtime_free"})
 _RUNTIME_CONTROLS = frozenset({
+    "capacity_status", "capacity_close", "capacity_forget",
     "plugin_status", "plugin_close", "plugin_forget", "pool_status", "pool_close", "pool_forget",
     "pool_revoke_permission", "session_status", "session_close", "session_forget",
     "operation_status", "operation_list", "operation_cancel", "operation_forget", "capabilities_list",

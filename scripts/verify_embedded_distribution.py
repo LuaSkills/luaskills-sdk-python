@@ -73,7 +73,7 @@ assert compatibility.__file__.startswith(sys.argv[1])
 assert luaskills.EmbeddedCompatibilityError is compatibility.EmbeddedCompatibilityError
 # Resolve imported recursive aliases in their defining contract namespace, as required by typing on Python 3.10.
 # 按 Python 3.10 typing 的要求，在定义契约命名空间解析导入的递归别名。
-for declaration in (client.EmbeddedClient, client.EmbeddedPending, client.EmbeddedRuntime, client.EmbeddedPlugin,
+for declaration in (client.EmbeddedClient, client.EmbeddedPending, client.EmbeddedRuntime, client.EmbeddedPlugin, client.EmbeddedCapacity,
                     client.EmbeddedPool, client.EmbeddedSession, client.EmbeddedSessionOpen, client.EmbeddedOperation,
                     scope.EmbeddedRuntimeScope):
     assert getattr(luaskills, declaration.__name__) is declaration
