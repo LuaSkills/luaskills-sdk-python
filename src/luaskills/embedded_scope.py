@@ -219,12 +219,20 @@ class EmbeddedRuntimeScope:
             self._transport.release_results()
             self._release_failure = False
         if self._phase == "closing_runtime":
-            self._transition("runtime_close", "draining_callbacks")
-        if self._phase == "draining_callbacks":
-            self._drain_callbacks(retry)
-            self._set_phase("draining_runtime")
+            self._transition("runtime_close", "draining_runtime")
         if self._phase == "draining_runtime":
+            # Finalizers can create new callbacks after business cancellation; retain the exact pump.
+            # 业务取消后关闭函数仍可创建新回调；保留精确事件泵。
+            if retry and self._pump is not None and self._pump.recovery_required:
+                try:
+                    self._pump.retry_acknowledgements()
+                except EmbeddedResultReleaseError as error:
+                    # The pump owns this failed buffer, so scope recovery must not claim its result journal.
+                    # 失败缓冲由事件泵拥有，作用域恢复不得认领其结果日志。
+                    raise EmbeddedRuntimeError("busy", "callback pump requires explicit delivery recovery before runtime release") from error
             while True:
+                if self._pump is not None and self._pump.recovery_required:
+                    raise EmbeddedRuntimeError("busy", "callback pump requires explicit delivery recovery before runtime release")
                 # Queries use the scope's reserved slot even when driver receipt quotas are exhausted.
                 # 即使驱动器回执配额耗尽，查询仍使用作用域预留槽。
                 snapshot = self._transport.request({"type": "runtime_status", "runtime_id": self.runtime.runtime_id})
@@ -234,6 +242,9 @@ class EmbeddedRuntimeScope:
                 if snapshot["closed"]:
                     break
                 time.sleep(self._poll_interval)
+            self._set_phase("draining_callbacks")
+        if self._phase == "draining_callbacks":
+            self._drain_callbacks(retry)
             self._set_phase("releasing_runtime")
         if self._phase == "releasing_runtime":
             while True:
@@ -275,7 +286,7 @@ class EmbeddedRuntimeScope:
             except BaseException as error:
                 # Pump recovery owns its own journals and buffers; a busy drainage observer can safely retry.
                 # 泵恢复拥有自己的日志及缓冲；繁忙排空观察者可以安全重试。
-                callback_recovery = (self._phase == "draining_callbacks" and self._pump is not None
+                callback_recovery = (self._phase in ("draining_callbacks", "draining_runtime") and self._pump is not None
                     and ((isinstance(error, EmbeddedRuntimeError) and error.code == "busy")
                          or (not self._pump._closed.done() and self._pump.recovery_required)))
                 with self._lock:

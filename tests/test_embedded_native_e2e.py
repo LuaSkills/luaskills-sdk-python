@@ -90,12 +90,12 @@ class EmbeddedNativeFixture:
         """
         return self.transport.request({"type":"runtime", "runtime_id":self.runtime_id, "operation":operation})
 
-    def pool(self, source):
+    def pool(self, source, finalizer=None):
         """
-        Register immutable Lua source and its explicit reusable pool policy under the trusted test package.
-        在可信测试包下注册不可变 Lua 源码及其显式可复用池策略。
+        Register immutable source, using single-call policy only when an explicit finalizer is supplied.
+        注册不可变源码，仅在提供显式 finalizer 时使用单次调用策略。
         """
-        return self.command({"type":"pool_register", "definition":{
+        request = {"type":"pool_register", "definition":{
             "plugin_id":self.plugin_id, "generation":"python-generation-1",
             "package_root":self.package_root.as_posix(), "dependencies_file":"dependencies.yaml",
             "workspace_root":None, "cwd":None, "mounts":{}, "security_partition":"python-test",
@@ -104,7 +104,12 @@ class EmbeddedNativeFixture:
             "kind":"shared", "min_resident_vms":0, "max_resident_vms":2,
             "max_running_calls":2, "max_queued_calls":4, "reuse":"reusable", "serial":False,
             "backend":"in_process", "idle_ttl_ms":None, "max_uses":None,
-        }, "permissions":["python.host"], "execution_revision":"python-v1"})["pool_id"]
+        }, "permissions":["python.host"], "execution_revision":"python-v1"}
+        if finalizer is not None:
+            request["definition"]["finalizer"] = finalizer
+            request["definition"]["exports"].append({"name":finalizer["export"], "input_schema":True, "output_schema":True})
+            request["policy"]["reuse"] = "single_call"
+        return self.command(request)["pool_id"]
 
     def submit(self, pool_id, arguments):
         """
@@ -135,6 +140,30 @@ class EmbeddedNativeIntegrationTests(EmbeddedNativeFixture, unittest.TestCase):
     Verify real C signatures, core lifetime, Lua state and callback ownership without mock native calls.
     验证实际 C 签名、核心寿命、Lua 状态及回调所有权，不模拟原生调用。
     """
+
+    def test_automatic_finalization_preserves_null_and_independent_failure(self):
+        """
+        Consume real automatic closing through ctypes and retain both results including successful null.
+        通过 ctypes 消费真实自动关闭，并保留包含成功空值的两个结果。
+        """
+        pool_id = self.pool(
+            "local called=false; local fail=false; return {call=function(a) called=true; fail=a; return nil end, shutdown=function() assert(called); if fail then error('closing failed') end; return nil end}",
+            {"export":"shutdown", "arguments":None, "timeout_ms":1000},
+        )
+        for fail in (False, True):
+            with self.subTest(closing_failure=fail):
+                snapshot = self.terminal(self.submit(pool_id, fail))
+                self.assertEqual(snapshot["phase"], "failed" if fail else "succeeded", snapshot)
+                stages = snapshot["finalization"]
+                self.assertEqual(stages["business"], {"status":"succeeded", "value":None})
+                self.assertEqual(stages["business_effect_count"], 0)
+                if fail:
+                    self.assertEqual(stages["outcome"]["status"], "failed")
+                    self.assertEqual(stages["outcome"]["error"], snapshot["error"])
+                else:
+                    self.assertEqual(stages["outcome"], {"status":"succeeded", "value":None})
+                    self.assertIn("value", snapshot)
+                    self.assertIsNone(snapshot["value"])
 
     def test_actual_lua_state_json_types_and_native_lifecycle(self):
         """

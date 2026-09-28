@@ -44,7 +44,7 @@ class EmbeddedScopeBudgetTests(unittest.TestCase):
         scope = object.__new__(EmbeddedRuntimeScope)
         scope._runtime = SimpleNamespace(runtime_id="exact-slot")
         scope._lock = threading.Lock()
-        for command, phase, following in [("runtime_close", "closing_runtime", "draining_callbacks"),
+        for command, phase, following in [("runtime_close", "closing_runtime", "draining_runtime"),
                                           ("runtime_free", "releasing_runtime", "released")]:
             for value in [None, [], {}, {"runtime_id": "other-slot"}, {"runtime_id": 1}]:
                 for failed_release in [False, True]:
@@ -355,12 +355,14 @@ class EmbeddedScopeNativeTests(EmbeddedNativeFixture, unittest.TestCase):
         entered = threading.Event()
         release = threading.Event()
         self.addCleanup(release.set)
+        calls = []
 
         def handler(arguments, context):
             """
             Hold actual host work until release and publish a late committed effect before returning.
             保持实际宿主工作直到 release，并在返回前发布迟到提交副作用。
             """
+            calls.append(arguments)
             entered.set()
             self.assertTrue(release.wait(5))
             context.report_effects("committed")
@@ -372,7 +374,7 @@ class EmbeddedScopeNativeTests(EmbeddedNativeFixture, unittest.TestCase):
             "scope": "invocation", "max_concurrent": 1, "max_call_ms": 10000,
             "max_input_bytes": 1024, "max_output_bytes": 1024, "effects": "mutating", "idempotency": "none",
         }, handler, "sync")], 5)
-        operation_id = self.submit(self.pool("return {call=function(a) return vulcan.capabilities.call('scope.callback',a) end}"), None)
+        operation_id = self.submit(self.pool("return {call=function(a) return vulcan.capabilities.call('scope.callback',a) end, shutdown=function() local r=vulcan.capabilities.call('scope.callback','closing'); assert(r.ok); return r.value end}", {"export":"shutdown", "arguments":None, "timeout_ms":5000}), None)
         self.assertTrue(entered.wait(2))
         scope = self.scope(pump)
 
@@ -391,7 +393,7 @@ class EmbeddedScopeNativeTests(EmbeddedNativeFixture, unittest.TestCase):
 
             waiting = asyncio.create_task(body())
             deadline = time.monotonic() + 2
-            while scope.status["phase"] != "draining_callbacks":
+            while scope.status["phase"] != "draining_runtime":
                 self.assertLess(time.monotonic(), deadline, scope.status)
                 await asyncio.sleep(0.001)
             waiting.cancel()
@@ -409,6 +411,7 @@ class EmbeddedScopeNativeTests(EmbeddedNativeFixture, unittest.TestCase):
         self.assertTrue(scope.status["closed"])
         self.assertTrue(pump.status["closed"])
         self.assertFalse(scope._thread.is_alive())
+        self.assertEqual(calls, [None, "closing"])
 
     def test_scope_reports_callback_recovery_then_retries_without_replaying_handler(self):
         """
@@ -443,7 +446,7 @@ class EmbeddedScopeNativeTests(EmbeddedNativeFixture, unittest.TestCase):
             done = self.terminal(operation)
             with self.assertRaisesRegex(EmbeddedRuntimeError, "explicit delivery recovery"):
                 scope.close(5)
-            self.assertEqual(scope.status["phase"], "draining_callbacks")
+            self.assertEqual(scope.status["phase"], "draining_runtime")
             self.assertTrue(scope.status["retryable"])
             self.assertTrue(pump.recovery_required)
             with self.assertRaises(EmbeddedRuntimeError):
