@@ -274,8 +274,13 @@ class EmbeddedNativeIntegrationTests(EmbeddedNativeFixture, unittest.TestCase):
             "scope":"invocation", "max_concurrent":1, "max_call_ms":10000,
             "max_input_bytes":1024, "max_output_bytes":1024, "effects":"mutating", "idempotency":"none",
         }]})["registration_ids"][0]
-        pool_id = self.pool("return {call=function(a) return vulcan.capabilities.call('python.callback',a) end}")
-        operation_id = self.submit(pool_id, {"plugin_id":"forged", "value":None})
+        pool_id = self.pool("return {call=function(a) vulcan.context.request.request_id='lua-forged'; return vulcan.capabilities.call('python.callback',a) end}")
+        # The original host request is supplied before admission, outside Lua-owned arguments.
+        # 原宿主请求在入场前提供，位于 Lua 所有参数之外。
+        operation_id = self.command({"type":"call_submit", "timeout_ms":10000, "call":{
+            "pool_id":pool_id, "export":"call", "arguments":{"plugin_id":"forged", "request_id":"argument-forged", "value":None},
+            "context":{"request_context":{"request_id":"python-host-request"}, "client_budget":None, "tool_config":None},
+        }})["operation_id"]
         deadline = time.monotonic() + 5
         while True:
             requests = self.command({"type":"host_requests_take", "limit":1})
@@ -291,6 +296,9 @@ class EmbeddedNativeIntegrationTests(EmbeddedNativeFixture, unittest.TestCase):
                 self.assertEqual(request["registration_id"], registration)
                 self.assertEqual(request["caller"]["plugin_id"], self.plugin_id)
                 self.assertEqual(request["caller"]["operation_id"], operation_id)
+                self.assertEqual(request["caller"]["request_id"], "python-host-request")
+                self.assertNotEqual(request["request_id"], request["caller"]["request_id"])
+                self.assertEqual(request["arguments"]["request_id"], "argument-forged")
                 self.assertEqual(request["arguments"]["plugin_id"], "forged")
                 self.command({"type":"operation_cancel", "operation_id":operation_id})
                 self.transport.close()
@@ -304,6 +312,8 @@ class EmbeddedNativeIntegrationTests(EmbeddedNativeFixture, unittest.TestCase):
                     "outcome":{"ok":True, "value":None, "effects":"committed"}})
             done = waiting.result(timeout=5)
         self.assertEqual(done["phase"], "cancelled", done)
+        self.assertEqual(done["context"]["caller"]["request_id"], "python-host-request")
+        self.assertTrue(all(effect["caller"]["request_id"] == "python-host-request" for effect in done["host_effects"]))
         self.assertTrue(any(effect["effects"] == "committed" for effect in done["host_effects"]))
         with self.assertRaises(EmbeddedTransportError) as busy:
             self.transport.free()

@@ -28,7 +28,7 @@ EMBEDDED_CORE_VERSION = '0.5.9'
 
 # Generated contract metadata: EMBEDDED_CONTRACT_SHA256.
 # 生成的契约元数据：EMBEDDED_CONTRACT_SHA256。
-EMBEDDED_CONTRACT_SHA256 = 'efc9224e7a02141c3ffd24a7bb02cf613fa4113e45ac68e81eeef12c9137a867'
+EMBEDDED_CONTRACT_SHA256 = '416539476de9d537b5294c6346b9c2df462bec299e8ab2303062d5289f45693a'
 
 # Generated contract metadata: EMBEDDED_DESCRIPTION_VERSION.
 # 生成的契约元数据：EMBEDDED_DESCRIPTION_VERSION。
@@ -2235,10 +2235,10 @@ class InputRequest(TypedDict, total=True):
     protocol_version: int
 
 
-class OutputCapabilityCaller(TypedDict, total=True):
+class _OutputCapabilityCallerRequired(TypedDict, total=True):
     """
-    Wire fields for OutputCapabilityCaller; native validation enforces semantic constraints.
-    OutputCapabilityCaller 的线字段；原生校验负责语义约束。
+    Wire fields for _OutputCapabilityCallerRequired; native validation enforces semantic constraints.
+    _OutputCapabilityCallerRequired 的线字段；原生校验负责语义约束。
     Host-authenticated caller data copied outside plugin-controlled arguments.
     在插件可控参数之外复制的宿主认证调用方数据。
     """
@@ -2282,6 +2282,22 @@ class OutputCapabilityCaller(TypedDict, total=True):
     # Exact wire member workspace_root; required independently of nullability.
     # 精确线成员 workspace_root；必需与是否可为空值相互独立。
     workspace_root: Union[str, None]
+
+
+class OutputCapabilityCaller(_OutputCapabilityCallerRequired, total=False):
+    """
+    Wire fields for OutputCapabilityCaller; native validation enforces semantic constraints.
+    OutputCapabilityCaller 的线字段；原生校验负责语义约束。
+    Host-authenticated caller data copied outside plugin-controlled arguments.
+    在插件可控参数之外复制的宿主认证调用方数据。
+    """
+    # Optional host request correlation frozen at admission, distinct from a queued capability request ID.
+    # 入场时冻结的可选宿主请求关联，区别于排队能力请求 ID。
+    # Lua-visible request context and business arguments cannot replace this value.
+    # Lua 可见请求上下文及业务参数不能替换此值。
+    # Exact wire member request_id; omittable independently of nullability.
+    # 精确线成员 request_id；可省略与是否可为空值相互独立。
+    request_id: Union[str, None]
 
 
 class OutputCapabilityDescriptor(TypedDict, total=True):
