@@ -170,17 +170,19 @@ class EmbeddedRuntime:
         """
         return self._client._submit({"type": "runtime", "runtime_id": self.runtime_id, "operation": operation}, project)
 
-    def initialize(self, engine_options: wire.InputLuaEngineOptions, runtime_config: wire.InputEmbeddedRuntimeConfig) -> EmbeddedPending[wire.OutputRuntimeReceipt]:
+    def initialize(self, engine_options: wire.InputLuaEngineOptions, runtime_config: wire.InputEmbeddedRuntimeConfig, persistence: wire.InputRuntimePersistenceConfig | None = None) -> EmbeddedPending[wire.OutputRuntimeReceipt]:
         """
         Start the one-shot native construction using explicit engine_options and runtime_config budgets.
         使用显式 engine_options 和 runtime_config 预算开始原生单次构造。
+        Optional persistence selects an explicit host path and storage budgets; None selects memory-only mode.
+        可选 persistence 选择显式宿主路径与存储预算；None 选择纯内存模式。
         Return an attempt receipt, not a success claim; always query status for ready, failed or faulted.
         返回尝试回执，不代表初始化成功；始终查询状态区分 ready、failed 或 faulted。
         After interruption retain this identity and query status instead of reinitializing.
         中断后保留此身份并查询状态，不重新初始化。
         """
         return self._client._submit({"type": "runtime_initialize", "runtime_id": self.runtime_id,
-                                    "engine_options": engine_options, "runtime_config": runtime_config}, lambda value: value)
+                                    "engine_options": engine_options, "runtime_config": runtime_config, "persistence": persistence}, lambda value: value)
 
     def status(self) -> EmbeddedPending[wire.OutputRuntimeSnapshot]:
         """
@@ -188,6 +190,47 @@ class EmbeddedRuntime:
         返回来自原生槽的实际初始化、关闭及资源证据。
         """
         return self._client._submit({"type": "runtime_status", "runtime_id": self.runtime_id}, lambda value: value)
+
+    def storage_status(self) -> EmbeddedPending[wire.OutputOperationJournalWorkerStatus]:
+        """
+        Return actual writer ownership on the control lane; memory-only runtimes report unsupported.
+        在控制通道返回实际写入者所有权；纯内存运行时报告不支持。
+        """
+        return self._submit({"type": "storage_status"}, lambda value: value)
+
+    def recover_storage(self) -> EmbeddedPending[bool]:
+        """
+        Reopen and validate the same failed database on the work lane; return whether recovery was needed.
+        在工作通道重新打开并校验同一故障数据库；返回是否需要恢复。
+        This never retries a checkpoint or executes a plugin; inspect operation failure and request retry separately.
+        此操作绝不重试检查点或执行插件；需另行检查操作故障并请求重试。
+        """
+        return self._submit({"type": "storage_recover"}, lambda value: value)
+
+    def history_get(self, history_runtime_id: str, operation_id: str) -> EmbeddedPending[wire.OutputJournalOperation | None]:
+        """
+        Read one original history_runtime_id/operation_id on the work lane; absence is not proof of no execution.
+        在工作通道读取一个原始 history_runtime_id/operation_id；不存在不证明从未执行。
+        """
+        return self._submit({"type": "history_get", "history_runtime_id": history_runtime_id, "operation_id": operation_id}, lambda value: value)
+
+    def history_next(self, after: wire.InputHistoryCursor | None = None) -> EmbeddedPending[wire.OutputJournalOperation | None]:
+        """
+        Read the row after the exact original cursor, or the first row for None; return None at enumeration end.
+        读取精确原始游标之后的记录，None 表示首条；枚举结束返回 None。
+        Concurrent changes are not a multi-call snapshot and historical identities never become live handles.
+        并发变更不构成跨调用快照，历史身份绝不成为活动句柄。
+        """
+        return self._submit({"type": "history_next", "after": after}, lambda value: value)
+
+    def history_forget(self, history_runtime_id: str, operation_id: str, expected_revision: int) -> EmbeddedPending[None]:
+        """
+        Remove reconciled terminal history at expected_revision; first forget any retained live operation.
+        按 expected_revision 移除已对账终态历史；需先遗忘仍保留的活动操作。
+        Return the native deletion receipt; stale revisions and unresolved effects retain the original record.
+        返回原生删除回执；过期修订及未决副作用保留原始记录。
+        """
+        return self._submit({"type": "history_forget", "history_runtime_id": history_runtime_id, "operation_id": operation_id, "expected_revision": expected_revision}, lambda value: value)
 
     def request_close(self) -> EmbeddedPending[wire.OutputRuntimeReceipt]:
         """
@@ -484,6 +527,22 @@ class EmbeddedOperation:
         返回包含完整副作用证据的待完成原生快照；错误不表示没有副作用。
         """
         return self._runtime._submit({"type": "operation_status", "operation_id": self.operation_id}, lambda value: value)
+
+    def persistence_failure(self) -> EmbeddedPending[wire.OutputOperationPersistenceFailure | None]:
+        """
+        Return the original operation's retained checkpoint failure without waiting for disk or retrying it.
+        返回原操作保留的检查点故障，不等待磁盘，也不重试它。
+        """
+        return self._runtime._submit({"type": "operation_persistence_failure", "operation_id": self.operation_id}, lambda value: value)
+
+    def retry_checkpoint(self) -> EmbeddedPending[bool]:
+        """
+        Request one retained checkpoint retry, returning False if already pending; no failure reports busy.
+        请求一次保留检查点重试，已在等待时返回 False；不存在故障则报告忙碌。
+        This keeps the original execution and result; it never replays Lua or the host callback.
+        此操作保留原执行及结果；绝不重放 Lua 或宿主回调。
+        """
+        return self._runtime._submit({"type": "operation_retry_checkpoint", "operation_id": self.operation_id}, lambda value: value)
 
     def cancel(self) -> EmbeddedPending[bool]:
         """

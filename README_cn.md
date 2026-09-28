@@ -385,6 +385,12 @@ finally:
 
 ## 嵌入式运行时传输（开发中）
 
+通过 `initialize(engine_options, runtime_config, persistence=None)` 显式启用持久模式。省略存储参数保持纯内存行为。传入生成配置，完整声明宿主管理的绝对 `path`、`journal` 保留预算及 `worker` 回执预算；SDK 不补造存储默认值，也不回退。初始化回执只确认尝试，实际结果须查询原生状态。状态包含可选实际存储所有权，协调关闭等待核心、写入者及保留回执排空。
+
+运行时 `storage_status / recover_storage` 提供写入者所有权观测与同一原文件的显式恢复；`history_get / history_next / history_forget` 按原**核心运行时命名空间**访问历史，该身份区别于 FFI 槽 ID。历史与恢复走工作通道；存储状态及操作方法 `persistence_failure / retry_checkpoint` 走控制通道。恢复不自动重试检查点或重放业务；无失败检查点时重试报告忙碌，返回假表示已有重试尚未完成。历史枚举使用原键游标，不提供跨调用快照。
+
+历史不会变成活动句柄。删除精确修订历史前须先遗忘活动操作元数据；副作用未决时继续保留，包括整体副作用仍未知的普通成功 Lua。外部事务对账、已失败写入者替换及进程退出后执行栈恢复尚不由这些方法提供。这些开发接口要求匹配的开发核心，不代表已发布包兼容。
+
 线类型位于 `luaskills.embedded_contract`：分开的 `Input*` 和 `Output*` 声明保留字段缺失与显式空值的区别，同时保留原生有符号／无符号 64 位范围内的精确整数。生成的 `EmbeddedNativeStatus` 也在包顶层导出。传输与回调泵使用这些生成的协议和副作用常量。详见随包分发的[离线契约及同步说明](src/luaskills/contracts/embedded/v1/README.md)；运行 `python scripts/generate_embedded_contract.py --check` 拒绝过期产物。wheel 和源码分发包均包含核心的精确 JSON 与 SHA-256，其中包括共享 JSON 向量，源码分发包另外包含生成器。
 
 嵌入式请求接受对象键为字符串的内置 JSON 值。在原生提交前拒绝元组、自定义嵌套容器、键强制转换、循环、非有限数、越界整数和不成对 Unicode 代理。响应解码拒绝解码后重复键，保留负零、整数值浮点数、完整整数位和显式空值。畸形响应仍遵守传输的拥有型结果释放协议。此严格编码器作用于新嵌入式接口；旧 JSON FFI 的行为保持原样。

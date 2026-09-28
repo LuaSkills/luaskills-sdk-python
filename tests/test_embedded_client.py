@@ -168,6 +168,90 @@ class EmbeddedClientNativeTests(EmbeddedNativeFixture, unittest.TestCase):
             "reuse": reuse, "serial": False, "backend": "in_process", "idle_ttl_ms": None, "max_uses": None,
         }, ["python.host"], "typed-v1"))
 
+    def test_persistent_history_preserves_original_context_across_reopen(self):
+        """
+        Exercise typed storage initialization, history and conservative retention through the actual DLL.
+        通过实际 DLL 验证类型化存储初始化、历史与保守保留。
+        """
+        # The database belongs to the fixture host and outlives both actual runtimes.
+        # 数据库属于夹具宿主，比两个实际运行时存活更久。
+        persistence = {"path": str(self.root / "operations.db"),
+            "journal": {"max_records": 16, "max_record_bytes": 32768, "max_database_bytes": 262144},
+            "worker": {"max_pending_writes": 8, "max_pending_bytes": 131072}}
+
+        def replace_runtime():
+            """
+            Release the current known slot and initialize the next through the typed persistent facade.
+            释放当前已知槽，并通过类型化持久外观初始化下一个槽。
+            """
+            self.take(self.runtime.request_close())
+            # Finite observation does not replace the core's actual worker closure proof.
+            # 有限观察不替代核心实际工作线程关闭证明。
+            deadline = time.monotonic() + 5
+            while not self.take(self.runtime.status())["closed"]:
+                self.assertLess(time.monotonic(), deadline)
+                time.sleep(0.001)
+            self.take(self.runtime.free())
+            self.runtime_id = None
+            self.runtime = self.take(self.client.reserve())
+            self.runtime_id = self.runtime.runtime_id
+            self.take(self.runtime.initialize(create_engine_options(self.root, host_options={
+                "system_lua_lib_dir": self.system_root.as_posix(), "allow_network_download": False,
+            }), self.runtime_limits, persistence))
+            self.assertEqual(self.take(self.runtime.status())["initialization"], "ready")
+            self.take(self.runtime.register_plugin(self.plugin_id, {name: self.runtime_limits[name] for name in (
+                "max_registered_pools", "max_sessions", "max_resident_vms", "max_running_calls",
+                "max_queued_calls", "max_queued_bytes", "max_operations")}))
+
+        replace_runtime()
+        # This namespace comes from the actual core, never the FFI control slot.
+        # 此命名空间来自实际核心，绝非 FFI 控制槽。
+        namespace = self.take(self.runtime.status())["core_runtime_id"]
+        self.assertIsNotNone(self.take(self.runtime.status())["persistence"])
+        self.assertFalse(self.take(self.runtime.recover_storage()))
+        self.assertFalse(self.take(self.runtime.storage_status())["closing"])
+        # No callback is needed to retain the exact module admission context.
+        # 保留精确模块入场上下文不需要回调。
+        pool = self.make_pool("return {call=function(a) return a end}")
+        # Preserve one actual JSON result across native release and reopen.
+        # 跨原生释放与重新打开保留一个实际 JSON 结果。
+        operation = self.take(pool.submit("call", {"durable": "中文"}, self.context, 10000))
+        # Terminal publication occurs after its persistent checkpoint is acknowledged.
+        # 终态在持久检查点确认后发布。
+        done = operation.wait(5)
+        self.assertIsNone(self.take(operation.persistence_failure()))
+        # No failed checkpoint is an explicit conflict, not implicit success or business replay.
+        # 不存在失败检查点是明确冲突，不是隐式成功或业务重放。
+        retry = operation.retry_checkpoint()
+        with self.assertRaises(EmbeddedRuntimeError) as error:
+            retry.result(5)
+        self.assertEqual(error.exception.code, "busy")
+        retry.forget()
+        # The entire original row remains comparable after another runtime owns the database.
+        # 另一个运行时拥有数据库后，整个原始行仍可比较。
+        history = self.take(self.runtime.history_get(namespace, operation.operation_id))
+        self.assertEqual(history["snapshot"], done)
+        self.assertEqual(self.take(self.runtime.history_next()), history)
+        self.assertIsNone(self.take(self.runtime.history_next({"runtime_id": namespace, "operation_id": operation.operation_id})))
+        self.take(operation.forget())
+        # Successful ordinary Lua cannot prove all possible side effects were reconciled.
+        # 成功的普通 Lua 无法证明所有可能副作用均已对账。
+        deletion = self.runtime.history_forget(namespace, operation.operation_id, history["revision"])
+        with self.assertRaises(EmbeddedRuntimeError) as error:
+            deletion.result(5)
+        self.assertEqual(error.exception.code, "busy")
+        deletion.forget()
+        replace_runtime()
+        self.assertNotEqual(self.take(self.runtime.status())["core_runtime_id"], namespace)
+        self.assertEqual(self.take(self.runtime.history_get(namespace, operation.operation_id)), history)
+        # Original historical operations are not adopted into the new live namespace.
+        # 原始历史操作不会被接管进新活动命名空间。
+        missing = self.runtime.operation(operation.operation_id).status()
+        with self.assertRaises(EmbeddedRuntimeError) as error:
+            missing.result(5)
+        self.assertEqual(error.exception.code, "not_found")
+        missing.forget()
+
     def test_shared_pool_calls_preserve_results_errors_and_explicit_forgetting(self):
         """
         Execute successful and failing Lua calls through typed handles; preserve snapshots until explicit forget.

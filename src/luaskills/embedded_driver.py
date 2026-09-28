@@ -29,6 +29,7 @@ _RUNTIME_CONTROLS = frozenset({
     "operation_status", "operation_cancel", "operation_forget", "capabilities_list",
     "capability_status", "capability_unregister", "capability_forget", "host_requests_take",
     "host_request_status", "host_request_complete",
+    "operation_persistence_failure", "operation_retry_checkpoint", "storage_status",
 })
 
 

@@ -28,7 +28,7 @@ EMBEDDED_CORE_VERSION = '0.5.9'
 
 # Generated contract metadata: EMBEDDED_CONTRACT_SHA256.
 # 生成的契约元数据：EMBEDDED_CONTRACT_SHA256。
-EMBEDDED_CONTRACT_SHA256 = 'e85a237140e8d6d761b69d3bde97e05e290630eec463f1127c4a6a2b7ef888fc'
+EMBEDDED_CONTRACT_SHA256 = '68e971c1da5ddb803713cdcf3900b1bb4a2559ad4cbc1633ed9a334fe3418fb8'
 
 # Generated contract metadata: EMBEDDED_DESCRIPTION_VERSION.
 # 生成的契约元数据：EMBEDDED_DESCRIPTION_VERSION。
@@ -40,7 +40,7 @@ EMBEDDED_DESCRIPTION_MAX_BYTES = 16384
 
 # Generated contract metadata: EMBEDDED_REQUIRED_CAPABILITIES.
 # 生成的契约元数据：EMBEDDED_REQUIRED_CAPABILITIES。
-EMBEDDED_REQUIRED_CAPABILITIES = ('bounded_transports_v1', 'plugin_budgets_v1', 'shared_pools_v1', 'dedicated_pools_v1', 'fixed_sessions_v1', 'host_request_queue_v1', 'in_memory_effect_evidence_v1', 'strict_json_v1')
+EMBEDDED_REQUIRED_CAPABILITIES = ('bounded_transports_v1', 'plugin_budgets_v1', 'shared_pools_v1', 'dedicated_pools_v1', 'fixed_sessions_v1', 'host_request_queue_v1', 'in_memory_effect_evidence_v1', 'durable_operation_history_v1', 'live_storage_recovery_v1', 'strict_json_v1')
 
 # Generated contract metadata: EMBEDDED_ROOT_COMMANDS.
 # 生成的契约元数据：EMBEDDED_ROOT_COMMANDS。
@@ -48,7 +48,7 @@ EMBEDDED_ROOT_COMMANDS = ('describe', 'runtime_reserve', 'runtime_initialize', '
 
 # Generated contract metadata: EMBEDDED_RUNTIME_COMMANDS.
 # 生成的契约元数据：EMBEDDED_RUNTIME_COMMANDS。
-EMBEDDED_RUNTIME_COMMANDS = ('plugin_register', 'plugin_status', 'plugin_close', 'plugin_forget', 'pool_register', 'pool_status', 'pool_close', 'pool_forget', 'pool_revoke_permission', 'call_submit', 'session_open', 'session_submit', 'session_status', 'session_close', 'session_forget', 'operation_status', 'operation_wait', 'operation_cancel', 'operation_forget', 'capabilities_register', 'capabilities_list', 'capability_status', 'capability_unregister', 'capability_forget', 'host_requests_take', 'host_request_status', 'host_request_complete')
+EMBEDDED_RUNTIME_COMMANDS = ('operation_persistence_failure', 'operation_retry_checkpoint', 'storage_status', 'storage_recover', 'history_get', 'history_next', 'history_forget', 'plugin_register', 'plugin_status', 'plugin_close', 'plugin_forget', 'pool_register', 'pool_status', 'pool_close', 'pool_forget', 'pool_revoke_permission', 'call_submit', 'session_open', 'session_submit', 'session_status', 'session_close', 'session_forget', 'operation_status', 'operation_wait', 'operation_cancel', 'operation_forget', 'capabilities_register', 'capabilities_list', 'capability_status', 'capability_unregister', 'capability_forget', 'host_requests_take', 'host_request_status', 'host_request_complete')
 
 
 class EmbeddedNativeStatus(IntEnum):
@@ -227,10 +227,10 @@ class InputCommandRuntimeReserve(TypedDict, total=True):
     type: Literal['runtime_reserve']
 
 
-class InputCommandRuntimeInitialize(TypedDict, total=True):
+class _InputCommandRuntimeInitializeRequired(TypedDict, total=True):
     """
-    Wire fields for InputCommandRuntimeInitialize; native validation enforces semantic constraints.
-    InputCommandRuntimeInitialize 的线字段；原生校验负责语义约束。
+    Wire fields for _InputCommandRuntimeInitializeRequired; native validation enforces semantic constraints.
+    _InputCommandRuntimeInitializeRequired 的线字段；原生校验负责语义约束。
     Attempt construction exactly once; the existing identity retains the actual outcome for query.
     精确尝试构造一次；已有身份保留实际结果供查询。
     """
@@ -252,6 +252,20 @@ class InputCommandRuntimeInitialize(TypedDict, total=True):
     # Exact wire member type; required independently of nullability.
     # 精确线成员 type；必需与是否可为空值相互独立。
     type: Literal['runtime_initialize']
+
+
+class InputCommandRuntimeInitialize(_InputCommandRuntimeInitializeRequired, total=False):
+    """
+    Wire fields for InputCommandRuntimeInitialize; native validation enforces semantic constraints.
+    InputCommandRuntimeInitialize 的线字段；原生校验负责语义约束。
+    Attempt construction exactly once; the existing identity retains the actual outcome for query.
+    精确尝试构造一次；已有身份保留实际结果供查询。
+    """
+    # Explicit durable storage; absence selects memory-only execution without creating a database.
+    # 显式持久存储；缺失表示纯内存执行，不创建数据库。
+    # Exact wire member persistence; omittable independently of nullability.
+    # 精确线成员 persistence；可省略与是否可为空值相互独立。
+    persistence: Union['InputRuntimePersistenceConfig', None]
 
 
 class InputCommandRuntimeStatus(TypedDict, total=True):
@@ -496,6 +510,25 @@ class InputEmbeddedRuntimeConfig(TypedDict, total=True):
 # Exact wire shape of InputExecutionBackend, derived from the packaged core schema.
 # 从包内核心 Schema 派生的 InputExecutionBackend 精确线形状。
 InputExecutionBackend: TypeAlias = Literal['in_process', 'worker_process']
+
+
+class InputHistoryCursor(TypedDict, total=True):
+    """
+    Wire fields for InputHistoryCursor; native validation enforces semantic constraints.
+    InputHistoryCursor 的线字段；原生校验负责语义约束。
+    Exact historical cursor; its fields come from the original durable record, not a newly opened runtime.
+    精确历史游标；字段来自原持久记录，不来自新打开的运行时。
+    """
+    # Original operation identity within that namespace.
+    # 该命名空间中的原始操作身份。
+    # Exact wire member operation_id; required independently of nullability.
+    # 精确线成员 operation_id；必需与是否可为空值相互独立。
+    operation_id: str
+    # Original core runtime namespace from the returned history record.
+    # 返回历史记录中的原始核心运行时命名空间。
+    # Exact wire member runtime_id; required independently of nullability.
+    # 精确线成员 runtime_id；必需与是否可为空值相互独立。
+    runtime_id: str
 
 
 class InputHostCompletionShape89b6ef9bf484(TypedDict, total=True):
@@ -1110,6 +1143,49 @@ class InputModuleExport(TypedDict, total=True):
     output_schema: JsonValue
 
 
+class InputOperationJournalConfig(TypedDict, total=True):
+    """
+    Wire fields for InputOperationJournalConfig; native validation enforces semantic constraints.
+    InputOperationJournalConfig 的线字段；原生校验负责语义约束。
+    Explicit retention budgets; SQLite journal/cache overhead is separate from the database-file cap.
+    显式保留预算；SQLite 日志及缓存开销与数据库文件上限分开计算。
+    """
+    # Maximum main database bytes, rounded down to whole SQLite pages.
+    # 主数据库最大字节数，向下取整至完整 SQLite 页。
+    # Exact wire member max_database_bytes; required independently of nullability.
+    # 精确线成员 max_database_bytes；必需与是否可为空值相互独立。
+    max_database_bytes: int
+    # Maximum UTF-8 JSON bytes for one complete stored record, including identities and revision.
+    # 单条完整存储记录的最大 UTF-8 JSON 字节数，包含身份及修订号。
+    # Exact wire member max_record_bytes; required independently of nullability.
+    # 精确线成员 max_record_bytes；必需与是否可为空值相互独立。
+    max_record_bytes: int
+    # Maximum retained operations across all runtime namespaces; no automatic eviction occurs.
+    # 所有运行时命名空间合计保留的最大操作数；不自动淘汰。
+    # Exact wire member max_records; required independently of nullability.
+    # 精确线成员 max_records；必需与是否可为空值相互独立。
+    max_records: int
+
+
+class InputOperationJournalWorkerConfig(TypedDict, total=True):
+    """
+    Wire fields for InputOperationJournalWorkerConfig; native validation enforces semantic constraints.
+    InputOperationJournalWorkerConfig 的线字段；原生校验负责语义约束。
+    Explicit budgets include queued, executing and caller-retained completed write receipts.
+    显式预算包含排队、执行中及调用方仍保留的已完成写入回执。
+    """
+    # Cumulative JSON request bytes retained across all admitted write attempts.
+    # 所有已接纳写入尝试合计保留的 JSON 请求字节数。
+    # Exact wire member max_pending_bytes; required independently of nullability.
+    # 精确线成员 max_pending_bytes；必需与是否可为空值相互独立。
+    max_pending_bytes: int
+    # Maximum admitted write attempts until their last actual receipt owner releases them.
+    # 最后一个真实回执所有者释放之前，最多接纳的写入尝试数。
+    # Exact wire member max_pending_writes; required independently of nullability.
+    # 精确线成员 max_pending_writes；必需与是否可为空值相互独立。
+    max_pending_writes: int
+
+
 class _InputPluginPoolConfigRequired(TypedDict, total=True):
     """
     Wire fields for _InputPluginPoolConfigRequired; native validation enforces semantic constraints.
@@ -1205,6 +1281,139 @@ class InputRuntimeClientInfo(TypedDict, total=False):
     # Exact wire member version; omittable independently of nullability.
     # 精确线成员 version；可省略与是否可为空值相互独立。
     version: Union[str, None]
+
+
+class InputRuntimeCommandOperationPersistenceFailure(TypedDict, total=True):
+    """
+    Wire fields for InputRuntimeCommandOperationPersistenceFailure; native validation enforces semantic constraints.
+    InputRuntimeCommandOperationPersistenceFailure 的线字段；原生校验负责语义约束。
+    Read retained checkpoint failure without disk I/O or retry.
+    读取保留检查点故障，不进行磁盘 I/O 或重试。
+    """
+    # Exact live operation identity in this runtime.
+    # 此运行时中的精确活动操作身份。
+    # Exact wire member operation_id; required independently of nullability.
+    # 精确线成员 operation_id；必需与是否可为空值相互独立。
+    operation_id: str
+    # Exact wire member type; required independently of nullability.
+    # 精确线成员 type；必需与是否可为空值相互独立。
+    type: Literal['operation_persistence_failure']
+
+
+class InputRuntimeCommandOperationRetryCheckpoint(TypedDict, total=True):
+    """
+    Wire fields for InputRuntimeCommandOperationRetryCheckpoint; native validation enforces semantic constraints.
+    InputRuntimeCommandOperationRetryCheckpoint 的线字段；原生校验负责语义约束。
+    Request one retry of the original immutable checkpoint, never another business execution.
+    请求重试原不可变检查点一次，绝不再次执行业务。
+    """
+    # Exact live operation identity retaining the failed candidate.
+    # 保留失败候选的精确活动操作身份。
+    # Exact wire member operation_id; required independently of nullability.
+    # 精确线成员 operation_id；必需与是否可为空值相互独立。
+    operation_id: str
+    # Exact wire member type; required independently of nullability.
+    # 精确线成员 type；必需与是否可为空值相互独立。
+    type: Literal['operation_retry_checkpoint']
+
+
+class InputRuntimeCommandStorageStatus(TypedDict, total=True):
+    """
+    Wire fields for InputRuntimeCommandStorageStatus; native validation enforces semantic constraints.
+    InputRuntimeCommandStorageStatus 的线字段；原生校验负责语义约束。
+    Read actual bounded writer ownership without waiting for disk.
+    读取真实有界写入者所有权，不等待磁盘。
+    """
+    # Exact wire member type; required independently of nullability.
+    # 精确线成员 type；必需与是否可为空值相互独立。
+    type: Literal['storage_status']
+
+
+class InputRuntimeCommandStorageRecover(TypedDict, total=True):
+    """
+    Wire fields for InputRuntimeCommandStorageRecover; native validation enforces semantic constraints.
+    InputRuntimeCommandStorageRecover 的线字段；原生校验负责语义约束。
+    Reopen and validate failed storage; this synchronous disk command belongs on a work lane.
+    重新打开并校验失败存储；此同步磁盘命令归入工作通道。
+    """
+    # Exact wire member type; required independently of nullability.
+    # 精确线成员 type；必需与是否可为空值相互独立。
+    type: Literal['storage_recover']
+
+
+class InputRuntimeCommandHistoryGet(TypedDict, total=True):
+    """
+    Wire fields for InputRuntimeCommandHistoryGet; native validation enforces semantic constraints.
+    InputRuntimeCommandHistoryGet 的线字段；原生校验负责语义约束。
+    Read historical evidence by its original namespace, without adopting it as a live operation.
+    按原命名空间读取历史证据，不将其接管为活动操作。
+    """
+    # Original core runtime namespace, distinct from the containing FFI slot identity.
+    # 原核心运行时命名空间，区别于外层 FFI 槽身份。
+    # Exact wire member history_runtime_id; required independently of nullability.
+    # 精确线成员 history_runtime_id；必需与是否可为空值相互独立。
+    history_runtime_id: str
+    # Exact original operation identity.
+    # 精确原始操作身份。
+    # Exact wire member operation_id; required independently of nullability.
+    # 精确线成员 operation_id；必需与是否可为空值相互独立。
+    operation_id: str
+    # Exact wire member type; required independently of nullability.
+    # 精确线成员 type；必需与是否可为空值相互独立。
+    type: Literal['history_get']
+
+
+class _InputRuntimeCommandHistoryNextRequired(TypedDict, total=True):
+    """
+    Wire fields for _InputRuntimeCommandHistoryNextRequired; native validation enforces semantic constraints.
+    _InputRuntimeCommandHistoryNextRequired 的线字段；原生校验负责语义约束。
+    Read at most one historical row after an explicit cursor; absence starts enumeration.
+    在显式游标后至多读取一条历史；缺失表示开始枚举。
+    """
+    # Exact wire member type; required independently of nullability.
+    # 精确线成员 type；必需与是否可为空值相互独立。
+    type: Literal['history_next']
+
+
+class InputRuntimeCommandHistoryNext(_InputRuntimeCommandHistoryNextRequired, total=False):
+    """
+    Wire fields for InputRuntimeCommandHistoryNext; native validation enforces semantic constraints.
+    InputRuntimeCommandHistoryNext 的线字段；原生校验负责语义约束。
+    Read at most one historical row after an explicit cursor; absence starts enumeration.
+    在显式游标后至多读取一条历史；缺失表示开始枚举。
+    """
+    # Original history key returned by a prior row, with no inferred current-runtime substitution.
+    # 前一行返回的原始历史键，不推断替换为当前运行时。
+    # Exact wire member after; omittable independently of nullability.
+    # 精确线成员 after；可省略与是否可为空值相互独立。
+    after: Union['InputHistoryCursor', None]
+
+
+class InputRuntimeCommandHistoryForget(TypedDict, total=True):
+    """
+    Wire fields for InputRuntimeCommandHistoryForget; native validation enforces semantic constraints.
+    InputRuntimeCommandHistoryForget 的线字段；原生校验负责语义约束。
+    Forget reconciled history only after any matching live runtime operation has been explicitly forgotten.
+    仅在显式遗忘任何匹配的活动运行时操作后，遗忘已对账历史。
+    """
+    # Positive original revision required for atomic compare-and-swap removal.
+    # 原子比较交换删除所需的原始正修订号。
+    # Exact wire member expected_revision; required independently of nullability.
+    # 精确线成员 expected_revision；必需与是否可为空值相互独立。
+    expected_revision: int
+    # Original historical runtime namespace.
+    # 原始历史运行时命名空间。
+    # Exact wire member history_runtime_id; required independently of nullability.
+    # 精确线成员 history_runtime_id；必需与是否可为空值相互独立。
+    history_runtime_id: str
+    # Exact original operation identity.
+    # 精确原始操作身份。
+    # Exact wire member operation_id; required independently of nullability.
+    # 精确线成员 operation_id；必需与是否可为空值相互独立。
+    operation_id: str
+    # Exact wire member type; required independently of nullability.
+    # 精确线成员 type；必需与是否可为空值相互独立。
+    type: Literal['history_forget']
 
 
 class InputRuntimeCommandPluginRegister(TypedDict, total=True):
@@ -1733,7 +1942,31 @@ class InputRuntimeCommandHostRequestComplete(TypedDict, total=True):
 
 # Exact wire shape of InputRuntimeCommand, derived from the packaged core schema.
 # 从包内核心 Schema 派生的 InputRuntimeCommand 精确线形状。
-InputRuntimeCommand: TypeAlias = Union['InputRuntimeCommandPluginRegister', 'InputRuntimeCommandPluginStatus', 'InputRuntimeCommandPluginClose', 'InputRuntimeCommandPluginForget', 'InputRuntimeCommandPoolRegister', 'InputRuntimeCommandPoolStatus', 'InputRuntimeCommandPoolClose', 'InputRuntimeCommandPoolForget', 'InputRuntimeCommandPoolRevokePermission', 'InputRuntimeCommandCallSubmit', 'InputRuntimeCommandSessionOpen', 'InputRuntimeCommandSessionSubmit', 'InputRuntimeCommandSessionStatus', 'InputRuntimeCommandSessionClose', 'InputRuntimeCommandSessionForget', 'InputRuntimeCommandOperationStatus', 'InputRuntimeCommandOperationWait', 'InputRuntimeCommandOperationCancel', 'InputRuntimeCommandOperationForget', 'InputRuntimeCommandCapabilitiesRegister', 'InputRuntimeCommandCapabilitiesList', 'InputRuntimeCommandCapabilityStatus', 'InputRuntimeCommandCapabilityUnregister', 'InputRuntimeCommandCapabilityForget', 'InputRuntimeCommandHostRequestsTake', 'InputRuntimeCommandHostRequestStatus', 'InputRuntimeCommandHostRequestComplete']
+InputRuntimeCommand: TypeAlias = Union['InputRuntimeCommandOperationPersistenceFailure', 'InputRuntimeCommandOperationRetryCheckpoint', 'InputRuntimeCommandStorageStatus', 'InputRuntimeCommandStorageRecover', 'InputRuntimeCommandHistoryGet', 'InputRuntimeCommandHistoryNext', 'InputRuntimeCommandHistoryForget', 'InputRuntimeCommandPluginRegister', 'InputRuntimeCommandPluginStatus', 'InputRuntimeCommandPluginClose', 'InputRuntimeCommandPluginForget', 'InputRuntimeCommandPoolRegister', 'InputRuntimeCommandPoolStatus', 'InputRuntimeCommandPoolClose', 'InputRuntimeCommandPoolForget', 'InputRuntimeCommandPoolRevokePermission', 'InputRuntimeCommandCallSubmit', 'InputRuntimeCommandSessionOpen', 'InputRuntimeCommandSessionSubmit', 'InputRuntimeCommandSessionStatus', 'InputRuntimeCommandSessionClose', 'InputRuntimeCommandSessionForget', 'InputRuntimeCommandOperationStatus', 'InputRuntimeCommandOperationWait', 'InputRuntimeCommandOperationCancel', 'InputRuntimeCommandOperationForget', 'InputRuntimeCommandCapabilitiesRegister', 'InputRuntimeCommandCapabilitiesList', 'InputRuntimeCommandCapabilityStatus', 'InputRuntimeCommandCapabilityUnregister', 'InputRuntimeCommandCapabilityForget', 'InputRuntimeCommandHostRequestsTake', 'InputRuntimeCommandHostRequestStatus', 'InputRuntimeCommandHostRequestComplete']
+
+
+class InputRuntimePersistenceConfig(TypedDict, total=True):
+    """
+    Wire fields for InputRuntimePersistenceConfig; native validation enforces semantic constraints.
+    InputRuntimePersistenceConfig 的线字段；原生校验负责语义约束。
+    Explicit host storage selection; omitting this whole object selects the existing memory-only runtime.
+    显式宿主存储选择；省略整个对象表示选择既有纯内存运行时。
+    """
+    # Explicit durable retention limits, independent of transient runtime budgets.
+    # 显式持久保留上限，独立于瞬态运行时预算。
+    # Exact wire member journal; required independently of nullability.
+    # 精确线成员 journal；必需与是否可为空值相互独立。
+    journal: 'InputOperationJournalConfig'
+    # Absolute database path owned and protected by the host, never a plugin-selected location.
+    # 由宿主拥有和保护的绝对数据库路径，绝非插件选择位置。
+    # Exact wire member path; required independently of nullability.
+    # 精确线成员 path；必需与是否可为空值相互独立。
+    path: str
+    # Explicit bounded storage-thread receipt limits.
+    # 显式有界存储线程回执上限。
+    # Exact wire member worker; required independently of nullability.
+    # 精确线成员 worker；必需与是否可为空值相互独立。
+    worker: 'InputOperationJournalWorkerConfig'
 
 
 class InputRuntimeRequestContext(TypedDict, total=False):
@@ -1998,6 +2231,11 @@ class OutputCapabilityRegistrationStatus(TypedDict, total=True):
 # Exact wire shape of OutputCapabilityScope, derived from the packaged core schema.
 # 从包内核心 Schema 派生的 OutputCapabilityScope 精确线形状。
 OutputCapabilityScope: TypeAlias = Literal['invocation', 'session']
+
+
+# Exact wire shape of OutputCheckpointRetryState, derived from the packaged core schema.
+# 从包内核心 Schema 派生的 OutputCheckpointRetryState 精确线形状。
+OutputCheckpointRetryState: TypeAlias = Literal['waiting', 'requested', 'retrying']
 
 
 # Exact wire shape of OutputEffectState, derived from the packaged core schema.
@@ -2436,6 +2674,30 @@ class OutputHostRequestStatus(TypedDict, total=True):
 OutputInitializationPhase: TypeAlias = Literal['reserved', 'initializing', 'ready', 'failed', 'faulted']
 
 
+class OutputJournalOperation(TypedDict, total=True):
+    """
+    Wire fields for OutputJournalOperation; native validation enforces semantic constraints.
+    OutputJournalOperation 的线字段；原生校验负责语义约束。
+    Historical checkpoint, not a live handle and not evidence authorizing execution replay.
+    历史检查点，不是活动句柄，也不是授权执行重放的证据。
+    """
+    # Monotonic compare-and-swap revision; positive and bounded by SQLite's signed integer.
+    # 单调比较交换修订号；为正数且受 SQLite 有符号整数范围约束。
+    # Exact wire member revision; required independently of nullability.
+    # 精确线成员 revision；必需与是否可为空值相互独立。
+    revision: int
+    # Original runtime namespace, never rebound to the namespace of a restarted runtime.
+    # 原始运行时命名空间，绝不重新绑定到重启后的命名空间。
+    # Exact wire member runtime_id; required independently of nullability.
+    # 精确线成员 runtime_id；必需与是否可为空值相互独立。
+    runtime_id: str
+    # Exact last committed observation; an unfinished phase remains unfinished after restart.
+    # 最后提交的精确观测；未结束的阶段在重启后仍保持未结束。
+    # Exact wire member snapshot; required independently of nullability.
+    # 精确线成员 snapshot；必需与是否可为空值相互独立。
+    snapshot: 'OutputOperationSnapshot'
+
+
 class OutputOperationContextShape453859e05338(TypedDict, total=True):
     """
     Wire fields for OutputOperationContextShape453859e05338; native validation enforces semantic constraints.
@@ -2483,6 +2745,79 @@ class OutputOperationContextShape7157ff32ad5b(TypedDict, total=True):
 # Exact wire shape of OutputOperationContext, derived from the packaged core schema.
 # 从包内核心 Schema 派生的 OutputOperationContext 精确线形状。
 OutputOperationContext: TypeAlias = Union['OutputOperationContextShape453859e05338', 'OutputOperationContextShape7157ff32ad5b']
+
+
+class OutputOperationJournalWorkerStatus(TypedDict, total=True):
+    """
+    Wire fields for OutputOperationJournalWorkerStatus; native validation enforces semantic constraints.
+    OutputOperationJournalWorkerStatus 的线字段；原生校验负责语义约束。
+    Live worker observations; retained receipts keep quota even after the thread has finished.
+    实时工作线程观测；线程结束后，保留的回执仍占有配额。
+    """
+    # New attempts are permanently refused while admitted attempts finish normally.
+    # 永久拒绝新尝试，而已接纳尝试正常完成。
+    # Exact wire member closing; required independently of nullability.
+    # 精确线成员 closing；必需与是否可为空值相互独立。
+    closing: bool
+    # First infrastructure failure; individual database rejection remains on its own receipt.
+    # 首个基础设施故障；单独的数据库拒绝仍位于各自回执。
+    # Exact wire member failure; required independently of nullability.
+    # 精确线成员 failure；必需与是否可为空值相互独立。
+    failure: Union['OutputEmbeddedError', None]
+    # Encoded request bytes reserved until each attempt's last owner disappears.
+    # 每次尝试最后一个所有者消失前预留的请求编码字节数。
+    # Exact wire member pending_bytes; required independently of nullability.
+    # 精确线成员 pending_bytes；必需与是否可为空值相互独立。
+    pending_bytes: int
+    # Total owned attempts including caller-retained completed receipts.
+    # 拥有的尝试总数，包含调用方保留的已完成回执。
+    # Exact wire member pending_writes; required independently of nullability.
+    # 精确线成员 pending_writes；必需与是否可为空值相互独立。
+    pending_writes: int
+    # Attempts still owned by the queue.
+    # 仍由队列拥有的尝试数。
+    # Exact wire member queued_writes; required independently of nullability.
+    # 精确线成员 queued_writes；必需与是否可为空值相互独立。
+    queued_writes: int
+    # Actual thread termination, observed from its join handle rather than a provisional flag.
+    # 从等待句柄观测到的真实线程终止，而非临时标记。
+    # Exact wire member worker_exited; required independently of nullability.
+    # 精确线成员 worker_exited；必需与是否可为空值相互独立。
+    worker_exited: bool
+    # Whether a real write is currently owned by the storage thread.
+    # 存储线程当前是否拥有真实写入。
+    # Exact wire member writing; required independently of nullability.
+    # 精确线成员 writing；必需与是否可为空值相互独立。
+    writing: bool
+
+
+class OutputOperationPersistenceFailure(TypedDict, total=True):
+    """
+    Wire fields for OutputOperationPersistenceFailure; native validation enforces semantic constraints.
+    OutputOperationPersistenceFailure 的线字段；原生校验负责语义约束。
+    A failed checkpoint remains queryable by exact operation ID until that original checkpoint is acknowledged.
+    失败检查点可按精确操作 ID 查询，直至原检查点得到确认。
+    """
+    # Retained persistence error; this does not rewrite the original business result.
+    # 保留的持久化错误；不改写原始业务结果。
+    # Exact wire member error; required independently of nullability.
+    # 精确线成员 error；必需与是否可为空值相互独立。
+    error: 'OutputEmbeddedError'
+    # Stable original operation identity, never a replacement execution.
+    # 稳定的原始操作身份，绝非替代执行。
+    # Exact wire member operation_id; required independently of nullability.
+    # 精确线成员 operation_id；必需与是否可为空值相互独立。
+    operation_id: str
+    # Exact candidate phase whose write failed; terminal candidates are not yet publicly terminal.
+    # 写入失败的精确候选阶段；终态候选尚不是公开终态。
+    # Exact wire member phase; required independently of nullability.
+    # 精确线成员 phase；必需与是否可为空值相互独立。
+    phase: 'OutputOperationPhase'
+    # Explicit host retry coordination, separate from ordinary polling.
+    # 显式宿主重试协调，独立于普通轮询。
+    # Exact wire member retry; required independently of nullability.
+    # 精确线成员 retry；必需与是否可为空值相互独立。
+    retry: 'OutputCheckpointRetryState'
 
 
 # Exact wire shape of OutputOperationPhase, derived from the packaged core schema.
@@ -2645,8 +2980,8 @@ class OutputRuntimeSnapshot(TypedDict, total=True):
     Queryable construction and core closure evidence; no runtime implementation state is inferred by SDKs.
     可查询构造与核心关闭证据；SDK 不推断运行时实现状态。
     """
-    # True only after native core workers have exited, or no core was ever created.
-    # 仅当原生核心工作线程已退出或从未创建核心时为真。
+    # True only after construction finishes and all created core and storage workers and receipts drain.
+    # 仅在构造结束且全部已创建核心、存储线程与回执排空后为真。
     # Exact wire member closed; required independently of nullability.
     # 精确线成员 closed；必需与是否可为空值相互独立。
     closed: bool
@@ -2670,6 +3005,11 @@ class OutputRuntimeSnapshot(TypedDict, total=True):
     # Exact wire member initialization; required independently of nullability.
     # 精确线成员 initialization；必需与是否可为空值相互独立。
     initialization: 'OutputInitializationPhase'
+    # Actual storage worker status when durable ownership has been created, including failed construction.
+    # 持久所有权创建后的实际存储工作线程状态，包含构造失败。
+    # Exact wire member persistence; required independently of nullability.
+    # 精确线成员 persistence；必需与是否可为空值相互独立。
+    persistence: Union['OutputOperationJournalWorkerStatus', None]
     # Live resident and execution accounting directly from the core when available.
     # 可用时直接来自核心的实时常驻与执行计数。
     # Exact wire member resources; required independently of nullability.
@@ -3150,6 +3490,78 @@ class OutputRuntimeCapabilityUnregisterResponse(TypedDict, total=True):
     status: 'OutputSuccessStatus'
 
 
+class OutputRuntimeHistoryForgetResponse(TypedDict, total=True):
+    """
+    Wire fields for OutputRuntimeHistoryForgetResponse; native validation enforces semantic constraints.
+    OutputRuntimeHistoryForgetResponse 的线字段；原生校验负责语义约束。
+    Borrowed success envelope avoids cloning application output during native response publication.
+    借用成功信封，避免原生响应发布期间克隆应用输出。
+    """
+    # Single protocol version authority.
+    # 唯一协议版本权威。
+    # Exact wire member protocol_version; required independently of nullability.
+    # 精确线成员 protocol_version；必需与是否可为空值相互独立。
+    protocol_version: int
+    # Borrowed result whose owner lives through serialization.
+    # 借用结果，其所有者跨序列化存活。
+    # Exact wire member result; required independently of nullability.
+    # 精确线成员 result；必需与是否可为空值相互独立。
+    result: None
+    # Exact success discriminator.
+    # 精确成功判别。
+    # Exact wire member status; required independently of nullability.
+    # 精确线成员 status；必需与是否可为空值相互独立。
+    status: 'OutputSuccessStatus'
+
+
+class OutputRuntimeHistoryGetResponse(TypedDict, total=True):
+    """
+    Wire fields for OutputRuntimeHistoryGetResponse; native validation enforces semantic constraints.
+    OutputRuntimeHistoryGetResponse 的线字段；原生校验负责语义约束。
+    Borrowed success envelope avoids cloning application output during native response publication.
+    借用成功信封，避免原生响应发布期间克隆应用输出。
+    """
+    # Single protocol version authority.
+    # 唯一协议版本权威。
+    # Exact wire member protocol_version; required independently of nullability.
+    # 精确线成员 protocol_version；必需与是否可为空值相互独立。
+    protocol_version: int
+    # Borrowed result whose owner lives through serialization.
+    # 借用结果，其所有者跨序列化存活。
+    # Exact wire member result; required independently of nullability.
+    # 精确线成员 result；必需与是否可为空值相互独立。
+    result: Union['OutputJournalOperation', None]
+    # Exact success discriminator.
+    # 精确成功判别。
+    # Exact wire member status; required independently of nullability.
+    # 精确线成员 status；必需与是否可为空值相互独立。
+    status: 'OutputSuccessStatus'
+
+
+class OutputRuntimeHistoryNextResponse(TypedDict, total=True):
+    """
+    Wire fields for OutputRuntimeHistoryNextResponse; native validation enforces semantic constraints.
+    OutputRuntimeHistoryNextResponse 的线字段；原生校验负责语义约束。
+    Borrowed success envelope avoids cloning application output during native response publication.
+    借用成功信封，避免原生响应发布期间克隆应用输出。
+    """
+    # Single protocol version authority.
+    # 唯一协议版本权威。
+    # Exact wire member protocol_version; required independently of nullability.
+    # 精确线成员 protocol_version；必需与是否可为空值相互独立。
+    protocol_version: int
+    # Borrowed result whose owner lives through serialization.
+    # 借用结果，其所有者跨序列化存活。
+    # Exact wire member result; required independently of nullability.
+    # 精确线成员 result；必需与是否可为空值相互独立。
+    result: Union['OutputJournalOperation', None]
+    # Exact success discriminator.
+    # 精确成功判别。
+    # Exact wire member status; required independently of nullability.
+    # 精确线成员 status；必需与是否可为空值相互独立。
+    status: 'OutputSuccessStatus'
+
+
 class OutputRuntimeHostRequestCompleteResponse(TypedDict, total=True):
     """
     Wire fields for OutputRuntimeHostRequestCompleteResponse; native validation enforces semantic constraints.
@@ -3263,6 +3675,54 @@ class OutputRuntimeOperationForgetResponse(TypedDict, total=True):
     # Exact wire member result; required independently of nullability.
     # 精确线成员 result；必需与是否可为空值相互独立。
     result: None
+    # Exact success discriminator.
+    # 精确成功判别。
+    # Exact wire member status; required independently of nullability.
+    # 精确线成员 status；必需与是否可为空值相互独立。
+    status: 'OutputSuccessStatus'
+
+
+class OutputRuntimeOperationPersistenceFailureResponse(TypedDict, total=True):
+    """
+    Wire fields for OutputRuntimeOperationPersistenceFailureResponse; native validation enforces semantic constraints.
+    OutputRuntimeOperationPersistenceFailureResponse 的线字段；原生校验负责语义约束。
+    Borrowed success envelope avoids cloning application output during native response publication.
+    借用成功信封，避免原生响应发布期间克隆应用输出。
+    """
+    # Single protocol version authority.
+    # 唯一协议版本权威。
+    # Exact wire member protocol_version; required independently of nullability.
+    # 精确线成员 protocol_version；必需与是否可为空值相互独立。
+    protocol_version: int
+    # Borrowed result whose owner lives through serialization.
+    # 借用结果，其所有者跨序列化存活。
+    # Exact wire member result; required independently of nullability.
+    # 精确线成员 result；必需与是否可为空值相互独立。
+    result: Union['OutputOperationPersistenceFailure', None]
+    # Exact success discriminator.
+    # 精确成功判别。
+    # Exact wire member status; required independently of nullability.
+    # 精确线成员 status；必需与是否可为空值相互独立。
+    status: 'OutputSuccessStatus'
+
+
+class OutputRuntimeOperationRetryCheckpointResponse(TypedDict, total=True):
+    """
+    Wire fields for OutputRuntimeOperationRetryCheckpointResponse; native validation enforces semantic constraints.
+    OutputRuntimeOperationRetryCheckpointResponse 的线字段；原生校验负责语义约束。
+    Borrowed success envelope avoids cloning application output during native response publication.
+    借用成功信封，避免原生响应发布期间克隆应用输出。
+    """
+    # Single protocol version authority.
+    # 唯一协议版本权威。
+    # Exact wire member protocol_version; required independently of nullability.
+    # 精确线成员 protocol_version；必需与是否可为空值相互独立。
+    protocol_version: int
+    # Borrowed result whose owner lives through serialization.
+    # 借用结果，其所有者跨序列化存活。
+    # Exact wire member result; required independently of nullability.
+    # 精确线成员 result；必需与是否可为空值相互独立。
+    result: bool
     # Exact success discriminator.
     # 精确成功判别。
     # Exact wire member status; required independently of nullability.
@@ -3654,6 +4114,54 @@ class OutputRuntimeSessionSubmitResponse(TypedDict, total=True):
     status: 'OutputSuccessStatus'
 
 
+class OutputRuntimeStorageRecoverResponse(TypedDict, total=True):
+    """
+    Wire fields for OutputRuntimeStorageRecoverResponse; native validation enforces semantic constraints.
+    OutputRuntimeStorageRecoverResponse 的线字段；原生校验负责语义约束。
+    Borrowed success envelope avoids cloning application output during native response publication.
+    借用成功信封，避免原生响应发布期间克隆应用输出。
+    """
+    # Single protocol version authority.
+    # 唯一协议版本权威。
+    # Exact wire member protocol_version; required independently of nullability.
+    # 精确线成员 protocol_version；必需与是否可为空值相互独立。
+    protocol_version: int
+    # Borrowed result whose owner lives through serialization.
+    # 借用结果，其所有者跨序列化存活。
+    # Exact wire member result; required independently of nullability.
+    # 精确线成员 result；必需与是否可为空值相互独立。
+    result: bool
+    # Exact success discriminator.
+    # 精确成功判别。
+    # Exact wire member status; required independently of nullability.
+    # 精确线成员 status；必需与是否可为空值相互独立。
+    status: 'OutputSuccessStatus'
+
+
+class OutputRuntimeStorageStatusResponse(TypedDict, total=True):
+    """
+    Wire fields for OutputRuntimeStorageStatusResponse; native validation enforces semantic constraints.
+    OutputRuntimeStorageStatusResponse 的线字段；原生校验负责语义约束。
+    Borrowed success envelope avoids cloning application output during native response publication.
+    借用成功信封，避免原生响应发布期间克隆应用输出。
+    """
+    # Single protocol version authority.
+    # 唯一协议版本权威。
+    # Exact wire member protocol_version; required independently of nullability.
+    # 精确线成员 protocol_version；必需与是否可为空值相互独立。
+    protocol_version: int
+    # Borrowed result whose owner lives through serialization.
+    # 借用结果，其所有者跨序列化存活。
+    # Exact wire member result; required independently of nullability.
+    # 精确线成员 result；必需与是否可为空值相互独立。
+    result: 'OutputOperationJournalWorkerStatus'
+    # Exact success discriminator.
+    # 精确成功判别。
+    # Exact wire member status; required independently of nullability.
+    # 精确线成员 status；必需与是否可为空值相互独立。
+    status: 'OutputSuccessStatus'
+
+
 # Public generated type names; metadata remains directly importable by name.
 # 公开生成类型名；元数据仍可按名称直接导入。
-__all__ = ['JsonValue', 'EmbeddedNativeStatus', 'InputCapabilityDescriptor', 'InputCapabilityEffects', 'InputCapabilityExecution', 'InputCapabilityIdempotency', 'InputCapabilityScope', 'InputCommand', 'InputCommandDescribe', 'InputCommandRuntime', 'InputCommandRuntimeClose', 'InputCommandRuntimeFree', 'InputCommandRuntimeInitialize', 'InputCommandRuntimeReserve', 'InputCommandRuntimeStatus', 'InputEffectState', 'InputEmbeddedCall', 'InputEmbeddedError', 'InputEmbeddedErrorCode', 'InputEmbeddedPluginConfig', 'InputEmbeddedRuntimeConfig', 'InputExecutionBackend', 'InputHostCompletion', 'InputHostCompletionShape89b6ef9bf484', 'InputHostCompletionShapeb9f2ee658336', 'InputInstanceReuse', 'InputLuaEngineOptions', 'InputLuaInvocationContext', 'InputLuaRuntimeCapabilityOptions', 'InputLuaRuntimeDatabaseCallbackMode', 'InputLuaRuntimeDatabaseProviderMode', 'InputLuaRuntimeHostOptions', 'InputLuaRuntimeManagedRuntimeConfig', 'InputLuaRuntimeRunLuaPoolConfig', 'InputLuaRuntimeSpaceControllerOptions', 'InputLuaRuntimeSpaceControllerProcessMode', 'InputLuaVmPoolConfig', 'InputModuleDefinition', 'InputModuleExport', 'InputPluginPoolConfig', 'InputPoolKind', 'InputRequest', 'InputRuntimeClientInfo', 'InputRuntimeCommand', 'InputRuntimeCommandCallSubmit', 'InputRuntimeCommandCapabilitiesList', 'InputRuntimeCommandCapabilitiesRegister', 'InputRuntimeCommandCapabilityForget', 'InputRuntimeCommandCapabilityStatus', 'InputRuntimeCommandCapabilityUnregister', 'InputRuntimeCommandHostRequestComplete', 'InputRuntimeCommandHostRequestStatus', 'InputRuntimeCommandHostRequestsTake', 'InputRuntimeCommandOperationCancel', 'InputRuntimeCommandOperationForget', 'InputRuntimeCommandOperationStatus', 'InputRuntimeCommandOperationWait', 'InputRuntimeCommandPluginClose', 'InputRuntimeCommandPluginForget', 'InputRuntimeCommandPluginRegister', 'InputRuntimeCommandPluginStatus', 'InputRuntimeCommandPoolClose', 'InputRuntimeCommandPoolForget', 'InputRuntimeCommandPoolRegister', 'InputRuntimeCommandPoolRevokePermission', 'InputRuntimeCommandPoolStatus', 'InputRuntimeCommandSessionClose', 'InputRuntimeCommandSessionForget', 'InputRuntimeCommandSessionOpen', 'InputRuntimeCommandSessionStatus', 'InputRuntimeCommandSessionSubmit', 'InputRuntimeRequestContext', 'InputToolCacheConfig', 'OutputCapabilityCaller', 'OutputCapabilityDescriptor', 'OutputCapabilityEffects', 'OutputCapabilityExecution', 'OutputCapabilityIdempotency', 'OutputCapabilityRegistrationStatus', 'OutputCapabilityScope', 'OutputCoreDescription', 'OutputEffectState', 'OutputEmbeddedBuildIdentity', 'OutputEmbeddedError', 'OutputEmbeddedErrorCode', 'OutputEmbeddedPluginConfig', 'OutputEmbeddedPluginSnapshot', 'OutputEmbeddedRuntimeUsage', 'OutputEmbeddedSessionPhase', 'OutputEmbeddedSessionSnapshot', 'OutputErrorResponse', 'OutputErrorStatus', 'OutputExecutionBackend', 'OutputHostEffectPhase', 'OutputHostEffectRecord', 'OutputHostRequest', 'OutputHostRequestPhase', 'OutputHostRequestStatus', 'OutputInitializationPhase', 'OutputOperationContext', 'OutputOperationContextShape453859e05338', 'OutputOperationContextShape7157ff32ad5b', 'OutputOperationPhase', 'OutputOperationReceipt', 'OutputOperationSnapshot', 'OutputPoolReceipt', 'OutputPoolUsage', 'OutputRegistrationReceipt', 'OutputRootDescribeResponse', 'OutputRootRuntimeCloseResponse', 'OutputRootRuntimeFreeResponse', 'OutputRootRuntimeInitializeResponse', 'OutputRootRuntimeReserveResponse', 'OutputRootRuntimeStatusResponse', 'OutputRuntimeCallSubmitResponse', 'OutputRuntimeCapabilitiesListResponse', 'OutputRuntimeCapabilitiesRegisterResponse', 'OutputRuntimeCapabilityForgetResponse', 'OutputRuntimeCapabilityStatusResponse', 'OutputRuntimeCapabilityUnregisterResponse', 'OutputRuntimeHostRequestCompleteResponse', 'OutputRuntimeHostRequestStatusResponse', 'OutputRuntimeHostRequestsTakeResponse', 'OutputRuntimeOperationCancelResponse', 'OutputRuntimeOperationForgetResponse', 'OutputRuntimeOperationStatusResponse', 'OutputRuntimeOperationWaitResponse', 'OutputRuntimePluginCloseResponse', 'OutputRuntimePluginForgetResponse', 'OutputRuntimePluginRegisterResponse', 'OutputRuntimePluginStatusResponse', 'OutputRuntimePoolCloseResponse', 'OutputRuntimePoolForgetResponse', 'OutputRuntimePoolRegisterResponse', 'OutputRuntimePoolRevokePermissionResponse', 'OutputRuntimePoolStatusResponse', 'OutputRuntimeReceipt', 'OutputRuntimeSessionCloseResponse', 'OutputRuntimeSessionForgetResponse', 'OutputRuntimeSessionOpenResponse', 'OutputRuntimeSessionStatusResponse', 'OutputRuntimeSessionSubmitResponse', 'OutputRuntimeSnapshot', 'OutputSessionReceipt', 'OutputSuccessStatus', 'OutputTransportConfig', 'OutputTransportDescription']
+__all__ = ['JsonValue', 'EmbeddedNativeStatus', 'InputCapabilityDescriptor', 'InputCapabilityEffects', 'InputCapabilityExecution', 'InputCapabilityIdempotency', 'InputCapabilityScope', 'InputCommand', 'InputCommandDescribe', 'InputCommandRuntime', 'InputCommandRuntimeClose', 'InputCommandRuntimeFree', 'InputCommandRuntimeInitialize', 'InputCommandRuntimeReserve', 'InputCommandRuntimeStatus', 'InputEffectState', 'InputEmbeddedCall', 'InputEmbeddedError', 'InputEmbeddedErrorCode', 'InputEmbeddedPluginConfig', 'InputEmbeddedRuntimeConfig', 'InputExecutionBackend', 'InputHistoryCursor', 'InputHostCompletion', 'InputHostCompletionShape89b6ef9bf484', 'InputHostCompletionShapeb9f2ee658336', 'InputInstanceReuse', 'InputLuaEngineOptions', 'InputLuaInvocationContext', 'InputLuaRuntimeCapabilityOptions', 'InputLuaRuntimeDatabaseCallbackMode', 'InputLuaRuntimeDatabaseProviderMode', 'InputLuaRuntimeHostOptions', 'InputLuaRuntimeManagedRuntimeConfig', 'InputLuaRuntimeRunLuaPoolConfig', 'InputLuaRuntimeSpaceControllerOptions', 'InputLuaRuntimeSpaceControllerProcessMode', 'InputLuaVmPoolConfig', 'InputModuleDefinition', 'InputModuleExport', 'InputOperationJournalConfig', 'InputOperationJournalWorkerConfig', 'InputPluginPoolConfig', 'InputPoolKind', 'InputRequest', 'InputRuntimeClientInfo', 'InputRuntimeCommand', 'InputRuntimeCommandCallSubmit', 'InputRuntimeCommandCapabilitiesList', 'InputRuntimeCommandCapabilitiesRegister', 'InputRuntimeCommandCapabilityForget', 'InputRuntimeCommandCapabilityStatus', 'InputRuntimeCommandCapabilityUnregister', 'InputRuntimeCommandHistoryForget', 'InputRuntimeCommandHistoryGet', 'InputRuntimeCommandHistoryNext', 'InputRuntimeCommandHostRequestComplete', 'InputRuntimeCommandHostRequestStatus', 'InputRuntimeCommandHostRequestsTake', 'InputRuntimeCommandOperationCancel', 'InputRuntimeCommandOperationForget', 'InputRuntimeCommandOperationPersistenceFailure', 'InputRuntimeCommandOperationRetryCheckpoint', 'InputRuntimeCommandOperationStatus', 'InputRuntimeCommandOperationWait', 'InputRuntimeCommandPluginClose', 'InputRuntimeCommandPluginForget', 'InputRuntimeCommandPluginRegister', 'InputRuntimeCommandPluginStatus', 'InputRuntimeCommandPoolClose', 'InputRuntimeCommandPoolForget', 'InputRuntimeCommandPoolRegister', 'InputRuntimeCommandPoolRevokePermission', 'InputRuntimeCommandPoolStatus', 'InputRuntimeCommandSessionClose', 'InputRuntimeCommandSessionForget', 'InputRuntimeCommandSessionOpen', 'InputRuntimeCommandSessionStatus', 'InputRuntimeCommandSessionSubmit', 'InputRuntimeCommandStorageRecover', 'InputRuntimeCommandStorageStatus', 'InputRuntimePersistenceConfig', 'InputRuntimeRequestContext', 'InputToolCacheConfig', 'OutputCapabilityCaller', 'OutputCapabilityDescriptor', 'OutputCapabilityEffects', 'OutputCapabilityExecution', 'OutputCapabilityIdempotency', 'OutputCapabilityRegistrationStatus', 'OutputCapabilityScope', 'OutputCheckpointRetryState', 'OutputCoreDescription', 'OutputEffectState', 'OutputEmbeddedBuildIdentity', 'OutputEmbeddedError', 'OutputEmbeddedErrorCode', 'OutputEmbeddedPluginConfig', 'OutputEmbeddedPluginSnapshot', 'OutputEmbeddedRuntimeUsage', 'OutputEmbeddedSessionPhase', 'OutputEmbeddedSessionSnapshot', 'OutputErrorResponse', 'OutputErrorStatus', 'OutputExecutionBackend', 'OutputHostEffectPhase', 'OutputHostEffectRecord', 'OutputHostRequest', 'OutputHostRequestPhase', 'OutputHostRequestStatus', 'OutputInitializationPhase', 'OutputJournalOperation', 'OutputOperationContext', 'OutputOperationContextShape453859e05338', 'OutputOperationContextShape7157ff32ad5b', 'OutputOperationJournalWorkerStatus', 'OutputOperationPersistenceFailure', 'OutputOperationPhase', 'OutputOperationReceipt', 'OutputOperationSnapshot', 'OutputPoolReceipt', 'OutputPoolUsage', 'OutputRegistrationReceipt', 'OutputRootDescribeResponse', 'OutputRootRuntimeCloseResponse', 'OutputRootRuntimeFreeResponse', 'OutputRootRuntimeInitializeResponse', 'OutputRootRuntimeReserveResponse', 'OutputRootRuntimeStatusResponse', 'OutputRuntimeCallSubmitResponse', 'OutputRuntimeCapabilitiesListResponse', 'OutputRuntimeCapabilitiesRegisterResponse', 'OutputRuntimeCapabilityForgetResponse', 'OutputRuntimeCapabilityStatusResponse', 'OutputRuntimeCapabilityUnregisterResponse', 'OutputRuntimeHistoryForgetResponse', 'OutputRuntimeHistoryGetResponse', 'OutputRuntimeHistoryNextResponse', 'OutputRuntimeHostRequestCompleteResponse', 'OutputRuntimeHostRequestStatusResponse', 'OutputRuntimeHostRequestsTakeResponse', 'OutputRuntimeOperationCancelResponse', 'OutputRuntimeOperationForgetResponse', 'OutputRuntimeOperationPersistenceFailureResponse', 'OutputRuntimeOperationRetryCheckpointResponse', 'OutputRuntimeOperationStatusResponse', 'OutputRuntimeOperationWaitResponse', 'OutputRuntimePluginCloseResponse', 'OutputRuntimePluginForgetResponse', 'OutputRuntimePluginRegisterResponse', 'OutputRuntimePluginStatusResponse', 'OutputRuntimePoolCloseResponse', 'OutputRuntimePoolForgetResponse', 'OutputRuntimePoolRegisterResponse', 'OutputRuntimePoolRevokePermissionResponse', 'OutputRuntimePoolStatusResponse', 'OutputRuntimeReceipt', 'OutputRuntimeSessionCloseResponse', 'OutputRuntimeSessionForgetResponse', 'OutputRuntimeSessionOpenResponse', 'OutputRuntimeSessionStatusResponse', 'OutputRuntimeSessionSubmitResponse', 'OutputRuntimeSnapshot', 'OutputRuntimeStorageRecoverResponse', 'OutputRuntimeStorageStatusResponse', 'OutputSessionReceipt', 'OutputSuccessStatus', 'OutputTransportConfig', 'OutputTransportDescription']
