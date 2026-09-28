@@ -28,7 +28,7 @@ EMBEDDED_CORE_VERSION = '0.5.9'
 
 # Generated contract metadata: EMBEDDED_CONTRACT_SHA256.
 # 生成的契约元数据：EMBEDDED_CONTRACT_SHA256。
-EMBEDDED_CONTRACT_SHA256 = '005e4d84748b8a9d2ef970512f0f6bfb06cf97ed7ee5282e7c67c0653a3c4907'
+EMBEDDED_CONTRACT_SHA256 = '5b925a5e67d50a48a9545d57ce7119bbba9e9d46ccfc771bdc9dea2da974cc35'
 
 # Generated contract metadata: EMBEDDED_DESCRIPTION_VERSION.
 # 生成的契约元数据：EMBEDDED_DESCRIPTION_VERSION。
@@ -362,8 +362,8 @@ class InputEmbeddedCapacityConfig(TypedDict, total=True):
     """
     Wire fields for InputEmbeddedCapacityConfig; native validation enforces semantic constraints.
     InputEmbeddedCapacityConfig 的线字段；原生校验负责语义约束。
-    Immutable capacity policy owned by one plugin across isolated module generations.
-    单个插件跨隔离模块代次持有的不可变容量策略。
+    Complete capacity policy owned by one plugin across isolated module generations.
+    单个插件跨隔离模块代次持有的完整容量策略。
     """
     # Maximum exact serialized bytes of queued requests across members.
     # 全部成员排队请求精确序列化字节数上限。
@@ -2677,8 +2677,8 @@ class OutputEmbeddedCapacityConfig(TypedDict, total=True):
     """
     Wire fields for OutputEmbeddedCapacityConfig; native validation enforces semantic constraints.
     OutputEmbeddedCapacityConfig 的线字段；原生校验负责语义约束。
-    Immutable capacity policy owned by one plugin across isolated module generations.
-    单个插件跨隔离模块代次持有的不可变容量策略。
+    Complete capacity policy owned by one plugin across isolated module generations.
+    单个插件跨隔离模块代次持有的完整容量策略。
     """
     # Maximum exact serialized bytes of queued requests across members.
     # 全部成员排队请求精确序列化字节数上限。
@@ -2724,8 +2724,8 @@ class OutputEmbeddedCapacitySnapshot(TypedDict, total=True):
     # Exact wire member committed_resident_vms; required independently of nullability.
     # 精确线成员 committed_resident_vms；必需与是否可为空值相互独立。
     committed_resident_vms: int
-    # Original complete policy, including physical and queued-work budgets.
-    # 原完整策略，包含物理及排队工作预算。
+    # Current complete policy, including physical and queued-work budgets.
+    # 当前完整策略，包含物理及排队工作预算。
     # Exact wire member config; required independently of nullability.
     # 精确线成员 config；必需与是否可为空值相互独立。
     config: 'OutputEmbeddedCapacityConfig'
