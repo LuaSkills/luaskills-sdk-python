@@ -423,6 +423,116 @@ class EmbeddedClientNativeTests(EmbeddedNativeFixture, unittest.TestCase):
         revision = self.take(self.runtime.history_reconcile(namespace, second.operation_id, failed_history["revision"], failed_resolution))
         self.take(self.runtime.history_forget(namespace, second.operation_id, revision))
 
+    def test_capacity_policy_revisions_preserve_sessions_and_control_admission(self):
+        """
+        Revise actual DLL capacity under full work receipts; preserve pinned Lua state and explicit conflicts.
+        在工作回执已满时修订实际 DLL 容量；保留固定 Lua 状态及显式冲突。
+        """
+        # Derive the original capacity from this exact runtime's fixture ceilings.
+        # 从此精确运行时的夹具上限派生原容量。
+        config = {"resources": {"kind": "shared", "min_resident_vms": 0,
+                  "max_resident_vms": self.runtime_limits["max_resident_vms"], "max_running_calls": 1},
+                  "max_queued_calls": self.runtime_limits["max_queued_calls"],
+                  "max_queued_bytes": self.runtime_limits["max_queued_bytes"]}
+        # The capacity handle remains bound to the same native owner across revisions.
+        # 容量句柄跨修订保持绑定同一原生所有者。
+        capacity = self.take(self.runtime.register_capacity(self.plugin_id, config))
+        # This immutable module keeps per-session state outside the mutable admission policy.
+        # 此不可变模块在可变入场策略之外保持逐会话状态。
+        definition = {"plugin_id": self.plugin_id, "generation": "policy-session",
+                      "package_root": self.package_root.as_posix(), "dependencies_file": "dependencies.yaml",
+                      "workspace_root": None, "cwd": None, "mounts": {}, "security_partition": "python-test",
+                      "source": """-- Keep private state in this fixed VM.
+-- 在此固定 VM 中保持私有状态。
+local count=0
+return {
+-- Advance the private counter.
+-- 递增私有计数器。
+call=function() count=count+1; return count end}""",
+                      "exports": [{"name": "call", "input_schema": True, "output_schema": True}]}
+        # Members reserve no independent guarantee.
+        # 成员不预留独立保证。
+        pool = self.take(capacity.register_pool(definition, {
+            **config["resources"], "max_queued_calls": config["max_queued_calls"], "reuse": "session",
+            "serial": False, "backend": "in_process", "idle_ttl_ms": None, "max_uses": None}, [], "policy-v1"))
+        # Original sessions consume every resident slot before the policy is revised.
+        # 策略修订前，原会话消费全部常驻槽位。
+        sessions = []
+        for _ in range(config["resources"]["max_resident_vms"]):
+            # Initialization acknowledgement is checked separately from session reservation.
+            # 初始化确认独立于会话预留检查。
+            opening = self.take(pool.open_session(5000))
+            self.assertEqual(opening.initialization.wait(5)["phase"], "succeeded")
+            self.take(opening.initialization.forget())
+            sessions.append(opening.session)
+        # Retained failed work receipts fill the configured lane without creating additional native ownership.
+        # 保留的失败工作回执填满配置通道，不创建额外原生归属。
+        held = []
+        for _ in range(self.driver._config.max_work_commands):
+            # Native resident pressure fails this request but keeps its original SDK receipt observable.
+            # 原生常驻压力使此请求失败，但保持原 SDK 回执可观察。
+            rejected = pool.open_session(5000)
+            with self.assertRaises(EmbeddedRuntimeError) as failure:
+                rejected.result(5)
+            self.assertEqual(failure.exception.code, "capacity_exceeded")
+            held.append(rejected)
+        with self.assertRaises(EmbeddedRuntimeError) as full:
+            pool.open_session(5000)
+        self.assertEqual(full.exception.code, "capacity_exceeded")
+        # Policy query and mutation must still execute through the independent control lane.
+        # 策略查询及变更仍必须经独立控制通道执行。
+        before = self.take(capacity.policy())
+        self.assertIsInstance(before["revision"], str)
+        # Shrink below pinned occupancy while converting the same owner to a dedicated guarantee.
+        # 转换同一所有者为专用保证，同时缩至低于固定占用。
+        target = {**config, "resources": {**config["resources"], "kind": "dedicated",
+                  "min_resident_vms": 1, "max_resident_vms": 1}}
+        # Success is represented only by the actual retained acknowledgement.
+        # 仅实际保留确认表示成功。
+        revision = self.take(capacity.revise(before["revision"], target))
+        self.assertIsInstance(revision, str)
+        self.assertNotEqual(revision, before["revision"])
+        # The stale command must fail once without silently obtaining another predecessor.
+        # 过期命令必须失败一次，不静默取得另一个前驱。
+        stale = capacity.revise(before["revision"], config)
+        with self.assertRaises(EmbeddedRuntimeError) as failure:
+            stale.result(5)
+        self.assertEqual(failure.exception.code, "busy")
+        stale.forget()
+        # Atomic status retains both the target policy and real occupancy above that target.
+        # 原子状态一并保留目标策略及高于目标的真实占用。
+        pending = self.take(capacity.policy())
+        self.assertEqual(pending["revision"], revision)
+        self.assertEqual(pending["capacity"]["config"], target)
+        self.assertEqual(pending["capacity"]["resources"]["resident"], len(sessions))
+        self.assertTrue(pending["pending_convergence"])
+        for receipt in held:
+            receipt.forget()
+        for session in sessions:
+            for expected in (1, 2):
+                # Revisions cannot reset or migrate a pinned VM's private state.
+                # 修订不能重置或迁移固定 VM 的私有状态。
+                operation = self.take(session.submit("call", None, self.context, 5000))
+                self.assertEqual(operation.wait(5)["value"], expected)
+                self.take(operation.forget())
+            self.take(session.request_close())
+        # Observe actual physical release rather than treating a close request as completion.
+        # 观测实际物理释放，不将关闭请求视为完成。
+        deadline = time.monotonic() + 5
+        while self.take(capacity.policy())["capacity"]["resources"]["resident"]:
+            self.assertLess(time.monotonic(), deadline)
+            time.sleep(0.001)
+        self.assertFalse(self.take(capacity.policy())["pending_convergence"])
+        self.take(self.runtime.request_close())
+        self.assertTrue(self.take(capacity.policy())["capacity"]["closing"])
+        # The read lane remains usable after runtime closure, but mutation cannot reopen it.
+        # 运行时关闭后读取通道仍可用，但变更不能将其重开。
+        closed = capacity.revise(revision, config)
+        with self.assertRaises(EmbeddedRuntimeError) as failure:
+            closed.result(5)
+        self.assertEqual(failure.exception.code, "closed")
+        closed.forget()
+
     def test_capacity_handle_preserves_members_and_explicit_release(self):
         """
         Exercise generated capacity types, typed members and actual DLL release without duplicating guarantees.

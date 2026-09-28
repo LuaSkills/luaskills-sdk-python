@@ -428,6 +428,23 @@ class EmbeddedCapacity:
         """
         return self._runtime._submit({"type": "capacity_status", "capacity_id": self.capacity_id}, lambda value: value)
 
+    def policy(self) -> EmbeddedPending[wire.OutputEmbeddedCapacityPolicySnapshot]:
+        """
+        Return the atomic native revision, current policy and convergence on the reserved control lane.
+        在预留控制通道返回原子原生修订、当前策略及收敛状态。
+        """
+        return self._runtime._submit({"type": "capacity_policy", "capacity_id": self.capacity_id}, lambda value: value)
+
+    def revise(self, expected_revision: str, config: wire.InputEmbeddedCapacityConfig) -> EmbeddedPending[str]:
+        """
+        Compare expected_revision and replace complete config; return the retained committed-token receipt.
+        比较 expected_revision 并替换完整 config；返回保留的已提交令牌回执。
+        Native conflicts, execution pressure and closure remain explicit; never refresh or retry the token automatically.
+        原生冲突、执行压力及关闭保持显式；绝不自动刷新或重试令牌。
+        """
+        return self._runtime._submit({"type": "capacity_revise", "capacity_id": self.capacity_id,
+                                     "expected_revision": expected_revision, "config": config}, lambda value: value)
+
     def request_close(self) -> EmbeddedPending[None]:
         """
         Permanently close capacity admission and request member drainage; return acknowledgement only.
