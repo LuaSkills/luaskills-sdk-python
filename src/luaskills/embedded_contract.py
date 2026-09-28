@@ -28,7 +28,7 @@ EMBEDDED_CORE_VERSION = '0.5.9'
 
 # Generated contract metadata: EMBEDDED_CONTRACT_SHA256.
 # 生成的契约元数据：EMBEDDED_CONTRACT_SHA256。
-EMBEDDED_CONTRACT_SHA256 = '05171a3cc51160288de8b5249a509293115e7a8d42c9f5f92122108fb18f2f20'
+EMBEDDED_CONTRACT_SHA256 = '9d7a26f6b954eee37e517f2d2b5a1057c8a88dd1eb714d7ce2fe2c9059827a69'
 
 # Generated contract metadata: EMBEDDED_DESCRIPTION_VERSION.
 # 生成的契约元数据：EMBEDDED_DESCRIPTION_VERSION。
@@ -1102,8 +1102,8 @@ class _InputModuleDefinitionRequired(TypedDict, total=True):
     # Exact wire member mounts; required independently of nullability.
     # 精确线成员 mounts；必需与是否可为空值相互独立。
     mounts: JsonValue
-    # Absolute plugin root inside the configured System trust root.
-    # 位于已配置 System 信任根内的绝对插件根目录。
+    # Exact absolute plugin root authorized by the trusted host, independent of legacy System roots.
+    # 可信宿主授权的精确绝对插件根目录，独立于旧 System 根。
     # Exact wire member package_root; required independently of nullability.
     # 精确线成员 package_root；必需与是否可为空值相互独立。
     package_root: str

@@ -23,8 +23,8 @@ class EmbeddedNativeFixture:
 
     def setUp(self):
         """
-        Create an isolated trusted system package using the core's documented module layout.
-        使用核心已约定的模块布局创建隔离可信系统包。
+        Create the host-authorized package outside System for every real embedded SDK scenario.
+        为每个真实嵌入式 SDK 场景在 System 外创建宿主授权包。
         """
         # Temporary files outlive the actual native shutdown cleanup registered below.
         # 临时文件比下方注册的实际原生关闭清理存活更久。
@@ -33,7 +33,9 @@ class EmbeddedNativeFixture:
         self.root = Path(self.directory.name).resolve()
         self.plugin_id = "python-embedded-test"
         self.system_root = self.root / "system_lua_lib"
-        self.package_root = self.system_root / self.plugin_id
+        # Formal modules use the exact declaration rather than legacy System-root containment.
+        # 正式模块使用精确声明，不依赖旧 System 根包含关系。
+        self.package_root = self.root / "plugin-generations" / self.plugin_id
         self.package_root.mkdir(parents=True)
         (self.package_root / "dependencies.yaml").write_text("{}\n", encoding="utf-8")
         # These are fixture budgets, with enough transport room for the entire bounded core snapshot.
