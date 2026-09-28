@@ -168,6 +168,32 @@ class EmbeddedClientNativeTests(EmbeddedNativeFixture, unittest.TestCase):
             "reuse": reuse, "serial": False, "backend": "in_process", "idle_ttl_ms": None, "max_uses": None,
         }, ["python.host"], "typed-v1"))
 
+    def replace_persistent_runtime(self, persistence):
+        """
+        Close the current fixture owner and initialize its replacement with explicit persistence; return no value.
+        关闭当前夹具所有者，以显式 persistence 初始化替代运行时；不返回值。
+        Keep the same trusted package and cleanup ownership while changing the actual core namespace.
+        改变实际核心命名空间时，保留同一可信包及清理所有权。
+        """
+        self.take(self.runtime.request_close())
+        # Wait for actual native closure before replacing the fixture's known owner.
+        # 替换夹具已知所有者前，等待实际原生关闭。
+        deadline = time.monotonic() + 5
+        while not self.take(self.runtime.status())["closed"]:
+            self.assertLess(time.monotonic(), deadline)
+            time.sleep(0.001)
+        self.take(self.runtime.free())
+        self.runtime_id = None
+        self.runtime = self.take(self.client.reserve())
+        self.runtime_id = self.runtime.runtime_id
+        self.take(self.runtime.initialize(create_engine_options(self.root, host_options={
+            "system_lua_lib_dir": self.system_root.as_posix(), "allow_network_download": False,
+        }), self.runtime_limits, persistence))
+        self.assertEqual(self.take(self.runtime.status())["initialization"], "ready")
+        self.take(self.runtime.register_plugin(self.plugin_id, {name: self.runtime_limits[name] for name in (
+            "max_registered_pools", "max_sessions", "max_resident_vms", "max_running_calls",
+            "max_queued_calls", "max_queued_bytes", "max_operations")}))
+
     def test_persistent_history_preserves_original_context_across_reopen(self):
         """
         Exercise typed storage initialization, history and conservative retention through the actual DLL.
@@ -184,24 +210,7 @@ class EmbeddedClientNativeTests(EmbeddedNativeFixture, unittest.TestCase):
             Release the current known slot and initialize the next through the typed persistent facade.
             释放当前已知槽，并通过类型化持久外观初始化下一个槽。
             """
-            self.take(self.runtime.request_close())
-            # Finite observation does not replace the core's actual worker closure proof.
-            # 有限观察不替代核心实际工作线程关闭证明。
-            deadline = time.monotonic() + 5
-            while not self.take(self.runtime.status())["closed"]:
-                self.assertLess(time.monotonic(), deadline)
-                time.sleep(0.001)
-            self.take(self.runtime.free())
-            self.runtime_id = None
-            self.runtime = self.take(self.client.reserve())
-            self.runtime_id = self.runtime.runtime_id
-            self.take(self.runtime.initialize(create_engine_options(self.root, host_options={
-                "system_lua_lib_dir": self.system_root.as_posix(), "allow_network_download": False,
-            }), self.runtime_limits, persistence))
-            self.assertEqual(self.take(self.runtime.status())["initialization"], "ready")
-            self.take(self.runtime.register_plugin(self.plugin_id, {name: self.runtime_limits[name] for name in (
-                "max_registered_pools", "max_sessions", "max_resident_vms", "max_running_calls",
-                "max_queued_calls", "max_queued_bytes", "max_operations")}))
+            self.replace_persistent_runtime(persistence)
 
         replace_runtime()
         # This namespace comes from the actual core, never the FFI control slot.
@@ -278,6 +287,140 @@ class EmbeddedClientNativeTests(EmbeddedNativeFixture, unittest.TestCase):
         self.assertEqual(self.take(self.runtime.history_get(namespace, operation.operation_id)), reconciled)
         self.take(self.runtime.history_forget(namespace, operation.operation_id, revision))
         self.assertIsNone(self.take(self.runtime.history_get(namespace, operation.operation_id)))
+
+    def available_persistence_failure(self, operation):
+        """
+        Read operation failure once its nonblocking observation gate is available; return the actual optional failure.
+        非阻塞观察门禁可用后读取 operation 故障；返回实际可空故障。
+        Retry only explicit busy observation, releasing every completed query receipt and retaining a finite deadline.
+        仅重试明确忙碌观察，释放每个完成查询回执并保留有限期限。
+        """
+        # A busy metadata observation never authorizes business or checkpoint mutation.
+        # 忙碌元数据观察绝不授权业务或检查点变更。
+        deadline = time.monotonic() + 5
+        while True:
+            # Each query owns its receipt until the completed response has been observed.
+            # 每次查询拥有其回执，直至完成响应已被观测。
+            pending = operation.persistence_failure()
+            try:
+                return self.take(pending)
+            except EmbeddedRuntimeError as error:
+                pending.forget()
+                if error.code != "busy":
+                    raise
+                self.assertLess(time.monotonic(), deadline)
+                time.sleep(0.001)
+
+    def test_persistent_capacity_failure_preserves_callback_and_explicit_retry(self):
+        """
+        Exhaust real journal capacity through a durable callback, then recover the failed checkpoint without business replay.
+        通过持久回调耗尽真实日志容量，再恢复失败检查点而不重放业务。
+        """
+        self.replace_persistent_runtime({"path": str(self.root / "capacity.db"),
+            "journal": {"max_records": 1, "max_record_bytes": 32768, "max_database_bytes": 262144},
+            "worker": {"max_pending_writes": 8, "max_pending_bytes": 131072}})
+        # The handler's actual invocation count is independent of Lua success or persistence observations.
+        # 处理器实际调用计数独立于 Lua 成功及持久化观测。
+        calls = []
+        # Close the callback owner before the existing fixture drains its runtime.
+        # 既有夹具排空运行时前关闭回调所有者。
+        pump = EmbeddedCallbackPump(self.transport, self.runtime_id, CallbackPumpConfig(
+            max_concurrent_handlers=1, max_pending_commands=4, poll_interval_ms=1))
+        self.addCleanup(pump.close, 5)
+
+        def handler(arguments, context):
+            """
+            Record the exact original host identity and confirmed fixture mutation; return the original arguments.
+            记录精确原宿主身份及已确认夹具变更；返回原始 arguments。
+            """
+            calls.append(context.caller["operation_id"])
+            context.report_effects("committed")
+            return arguments
+
+        pump.register([HostCapability({
+            "name": "durable.callback", "version": "1.0.0", "description": "Persistent capacity recovery fixture",
+            "input_schema": True, "output_schema": True, "execution": "queued", "permissions": ["python.host"],
+            "scope": "invocation", "max_concurrent": 1, "max_call_ms": 10000,
+            "max_input_bytes": 1024, "max_output_bytes": 1024, "effects": "mutating", "idempotency": "none",
+        }, handler, "sync")], 5)
+        # The first actual callback fills the sole retained history row.
+        # 首个实际回调填满唯一保留历史行。
+        pool = self.make_pool("return {call=function(a) local r=vulcan.capabilities.call('durable.callback',a); return r.value end}")
+        # Retain original IDs independently of SDK command receipts.
+        # 独立于 SDK 命令回执保留原 ID。
+        first = self.take(pool.submit("call", "committed-once", self.context, 10000))
+        # Waiting also ensures the callback has returned and its actual completion is durable.
+        # 等待也确保回调已返回且实际完成已持久化。
+        first_done = first.wait(5)
+        # Obtain the namespace from actual core status, not the outer slot.
+        # 从实际核心状态取得命名空间，而非外层槽。
+        namespace = self.take(self.runtime.status())["core_runtime_id"]
+        # Preserve complete evidence before forgetting only the live metadata.
+        # 仅遗忘活动元数据前保留完整证据。
+        history = self.take(self.runtime.history_get(namespace, first.operation_id))
+        self.take(first.forget())
+        # This separate call cannot start its business because the original history still consumes capacity.
+        # 原历史仍消耗容量，因此此独立调用不能开始业务。
+        second = self.take(pool.submit("call", "must-not-run", self.context, 10000))
+        # Poll only the control lane until the actual storage refusal becomes queryable.
+        # 仅轮询控制通道，直至实际存储拒绝可查询。
+        deadline = time.monotonic() + 5
+        while True:
+            # Retain the non-null failure for comparison after capacity is repaired.
+            # 保留非空故障，供修复容量后比较。
+            failure = self.available_persistence_failure(second)
+            if failure is not None:
+                break
+            self.assertLess(time.monotonic(), deadline)
+            time.sleep(0.001)
+        # Pure callback-only fixture source and the joined first handler justify this explicit host audit.
+        # 仅含回调的纯夹具源码及已完成首处理器为此显式宿主审计提供依据。
+        resolution = {"resolution_id": "capacity-audit", "resolver": "trusted-test-host",
+            "evidence": "fixture:joined-callback-and-no-other-effects", "execution": "observed_terminal",
+            "effects": "committed", "host_effects": [{"effect_id": effect["effect_id"],
+                "effects": "committed", "evidence": "fixture:actual-handler-completed"} for effect in history["snapshot"]["host_effects"]]}
+        # Repair capacity through public typed history methods while live control remains available.
+        # 活动控制仍可用时，通过公开类型化历史方法修复容量。
+        revision = self.take(self.runtime.history_reconcile(namespace, first.operation_id, history["revision"], resolution))
+        self.take(self.runtime.history_forget(namespace, first.operation_id, revision))
+        # Repair alone must leave the exact original checkpoint waiting for explicit retry.
+        # 仅修复必须使精确原检查点继续等待显式重试。
+        repaired_failure = self.available_persistence_failure(second)
+        # The original failed business result is retained; retry only persists that result and finishes cleanup.
+        # 原失败业务结果保留；重试仅持久化该结果并完成清理。
+        requested = self.take(second.retry_checkpoint())
+        # Observe the original operation, not a replacement execution.
+        # 观测原操作，而非替代执行。
+        done = second.wait(5)
+        self.assertEqual(first_done["value"], "committed-once")
+        self.assertEqual(history["snapshot"], first_done)
+        self.assertEqual(len(first_done["host_effects"]), 1)
+        self.assertTrue(all(effect["effects"] == "committed" for effect in first_done["host_effects"]))
+        self.assertEqual(calls, [first.operation_id])
+        self.assertEqual(failure["operation_id"], second.operation_id)
+        self.assertEqual(failure["error"]["code"], "capacity_exceeded")
+        self.assertEqual(failure["retry"], "waiting")
+        self.assertEqual(repaired_failure, failure)
+        self.assertTrue(requested)
+        self.assertEqual(done["phase"], "failed")
+        self.assertEqual(done["error"]["code"], "capacity_exceeded")
+        # A previously initialized VM was retired; its finalizers keep aggregate effects conservatively unknown.
+        # 已初始化 VM 被退役；其终结器使聚合副作用保守地保持未知。
+        self.assertEqual(done["effects"], "unknown")
+        self.assertEqual(done["host_effects"], [])
+        self.assertIsNone(self.available_persistence_failure(second))
+        # The host also audited this pure fixture's retirement, separately from its absent callback invocation.
+        # 宿主还独立审核了此纯夹具的退役，而非仅根据回调没有调用。
+        failed_history = self.take(self.runtime.history_get(namespace, second.operation_id))
+        self.assertEqual(failed_history["snapshot"], done)
+        self.take(second.forget())
+        # Explicit final evidence covers VM retirement without claiming business execution or a successful result.
+        # 显式最终证据覆盖 VM 退役，不宣称业务执行或成功结果。
+        failed_resolution = {"resolution_id": "failed-capacity-audit", "resolver": "trusted-test-host",
+            "evidence": "fixture:retired-vm-without-finalizers-or-new-effects", "execution": "observed_terminal",
+            "effects": "not_applicable", "host_effects": []}
+        revision = self.take(self.runtime.history_reconcile(namespace, second.operation_id, failed_history["revision"], failed_resolution))
+        self.take(self.runtime.history_forget(namespace, second.operation_id, revision))
 
     def test_shared_pool_calls_preserve_results_errors_and_explicit_forgetting(self):
         """
