@@ -28,7 +28,7 @@ EMBEDDED_CORE_VERSION = '0.5.9'
 
 # Generated contract metadata: EMBEDDED_CONTRACT_SHA256.
 # 生成的契约元数据：EMBEDDED_CONTRACT_SHA256。
-EMBEDDED_CONTRACT_SHA256 = '3db021e06afb4aee8ac00100db2a5ba20e29cb68cb43d5461a1770b9fd2e2b86'
+EMBEDDED_CONTRACT_SHA256 = '81d4cde84ad30d44c55aec846ce689979bc5dbd430b01d5a27f30ce235e33cd8'
 
 # Generated contract metadata: EMBEDDED_DESCRIPTION_VERSION.
 # 生成的契约元数据：EMBEDDED_DESCRIPTION_VERSION。
@@ -2311,6 +2311,11 @@ class OutputHostEffectRecord(TypedDict, total=True):
     Bounded evidence retained independently from values returned to Lua.
     独立于返回 Lua 的值保留的有界证据。
     """
+    # Original host-bound caller identity, retained for reconciliation without consulting a newer plugin generation.
+    # 原始宿主绑定调用身份；对账保留该身份，不查询较新的插件代次。
+    # Exact wire member caller; required independently of nullability.
+    # 精确线成员 caller；必需与是否可为空值相互独立。
+    caller: 'OutputCapabilityCaller'
     # Public capability name, excluding business arguments and credentials.
     # 公开能力名称，不包含业务参数与凭证。
     # Exact wire member capability_name; required independently of nullability.

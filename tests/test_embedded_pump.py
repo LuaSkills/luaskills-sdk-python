@@ -140,12 +140,16 @@ class EmbeddedPumpIntegrationTests(EmbeddedNativeFixture, unittest.TestCase):
         Invoke a synchronous handler off the pump loop and preserve explicit host commit and successful null.
         在事件泵循环外调用同步处理器，并保留显式宿主提交及成功空值。
         """
+        # Retain the actual trusted callback identity independently of the final operation response.
+        # 独立于最终操作响应，保留真实可信回调身份。
+        callers = []
         def handler(arguments, context):
             """
             Check authenticated identity separately from arguments, then report an actual test commit.
             独立于参数检查已认证身份，随后报告实际测试提交。
             """
             self.assertEqual(context.caller["plugin_id"], self.plugin_id)
+            callers.append(dict(context.caller))
             self.assertEqual(arguments["plugin_id"], "forged")
             self.assertEqual(HOST_CALLBACK_RUNTIME.get(), self.runtime_id)
             self.assertIsNot(threading.current_thread(), self.pump._thread)
@@ -158,6 +162,7 @@ class EmbeddedPumpIntegrationTests(EmbeddedNativeFixture, unittest.TestCase):
         operation = self.submit(self.callback_pool(), {"plugin_id":"forged"})
         done = self.terminal(operation)
         self.assertEqual(done["value"], {"ok":True, "value":None, "effects":"committed"}, done)
+        self.assertEqual([effect["caller"] for effect in done["host_effects"] if effect["registration_id"] == registration], callers)
         self.assertTrue(any(effect["effects"] == "committed" for effect in done["host_effects"]))
         self.pump.unregister(registration, timeout=5)
         self.assertEqual(self.pump.status["registration_ids"], ())
