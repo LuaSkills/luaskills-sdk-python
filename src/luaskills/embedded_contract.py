@@ -28,7 +28,7 @@ EMBEDDED_CORE_VERSION = '0.5.9'
 
 # Generated contract metadata: EMBEDDED_CONTRACT_SHA256.
 # 生成的契约元数据：EMBEDDED_CONTRACT_SHA256。
-EMBEDDED_CONTRACT_SHA256 = '5f64872836c3681e513e5d8b7ce944002bd5a5e369099df0101d486afb4cb805'
+EMBEDDED_CONTRACT_SHA256 = '66e504d36a9bffed4b57b9ce1dd9aa6aaca9030347c57581e3058aac7d69cc3c'
 
 # Generated contract metadata: EMBEDDED_DESCRIPTION_VERSION.
 # 生成的契约元数据：EMBEDDED_DESCRIPTION_VERSION。
@@ -40,7 +40,7 @@ EMBEDDED_DESCRIPTION_MAX_BYTES = 16384
 
 # Generated contract metadata: EMBEDDED_REQUIRED_CAPABILITIES.
 # 生成的契约元数据：EMBEDDED_REQUIRED_CAPABILITIES。
-EMBEDDED_REQUIRED_CAPABILITIES = ('bounded_transports_v1', 'plugin_budgets_v1', 'capacity_groups_v1', 'capacity_policy_revisions_v1', 'shared_pools_v1', 'dedicated_pools_v1', 'explicit_instance_prewarm_v1', 'reusable_pool_readiness_v1', 'fixed_sessions_v1', 'host_request_queue_v1', 'in_memory_effect_evidence_v1', 'durable_operation_history_v1', 'historical_effect_reconciliation_v1', 'live_storage_recovery_v1', 'journal_worker_recovery_v1', 'strict_json_v1')
+EMBEDDED_REQUIRED_CAPABILITIES = ('bounded_transports_v1', 'plugin_budgets_v1', 'capacity_groups_v1', 'capacity_policy_revisions_v1', 'shared_pools_v1', 'dedicated_pools_v1', 'explicit_instance_prewarm_v1', 'reusable_pool_readiness_v1', 'initialization_capability_policy_v1', 'fixed_sessions_v1', 'host_request_queue_v1', 'in_memory_effect_evidence_v1', 'durable_operation_history_v1', 'historical_effect_reconciliation_v1', 'live_storage_recovery_v1', 'journal_worker_recovery_v1', 'strict_json_v1')
 
 # Generated contract metadata: EMBEDDED_ROOT_COMMANDS.
 # 生成的契约元数据：EMBEDDED_ROOT_COMMANDS。
@@ -1841,6 +1841,13 @@ class InputRuntimeCommandPoolRegister(_InputRuntimeCommandPoolRegisterRequired, 
     # Exact wire member capacity_id; omittable independently of nullability.
     # 精确线成员 capacity_id；可省略与是否可为空值相互独立。
     capacity_id: Union[str, None]
+    # Exact initialization callback subset; absent or null inherits grants, while an empty set denies all.
+    # 精确初始化回调子集；省略或空值继承授权，空集合则全部拒绝。
+    # Names only narrow existing authority and are frozen before any VM is allocated.
+    # 名称仅收窄既有权威，并在分配任何 VM 前冻结。
+    # Exact wire member initialization_capabilities; omittable independently of nullability.
+    # 精确线成员 initialization_capabilities；可省略与是否可为空值相互独立。
+    initialization_capabilities: Union[List[str], None]
 
 
 class InputRuntimeCommandPoolStatus(TypedDict, total=True):

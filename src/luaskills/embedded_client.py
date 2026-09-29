@@ -295,15 +295,19 @@ class EmbeddedRuntime:
         return EmbeddedCapacity(self, capacity_id)
 
     def register_pool(self, definition: wire.InputModuleDefinition, policy: wire.InputPluginPoolConfig,
-                      permissions: list[str], execution_revision: str) -> EmbeddedPending[EmbeddedPool]:
+                      permissions: list[str], execution_revision: str, *,
+                      initialization_capabilities: list[str] | None = None) -> EmbeddedPending[EmbeddedPool]:
         """
         Register immutable definition with explicit policy, granted permissions and execution_revision.
         使用显式 policy、授权 permissions 和 execution_revision 注册不可变 definition。
         Return the actual pool handle only after the native registration acknowledgement.
         仅在原生注册确认后返回实际池句柄。
+        initialization_capabilities narrows source callbacks; None inherits and [] denies all without adding grants.
+        initialization_capabilities 收窄源码回调；None 继承，空数组全部拒绝且不增加授权。
         """
         return self._submit({"type": "pool_register", "definition": definition, "policy": policy,
-                             "permissions": permissions, "execution_revision": execution_revision},
+                             "permissions": permissions, "execution_revision": execution_revision,
+                             "initialization_capabilities": initialization_capabilities},
                             lambda value: self.pool(value["pool_id"]))
 
     def plugin(self, plugin_id: str) -> EmbeddedPlugin:
@@ -462,16 +466,20 @@ class EmbeddedCapacity:
         return self._runtime._submit({"type": "capacity_forget", "capacity_id": self.capacity_id}, lambda value: value)
 
     def register_pool(self, definition: wire.InputModuleDefinition, policy: wire.InputPluginPoolConfig,
-                      permissions: list[str], execution_revision: str) -> EmbeddedPending[EmbeddedPool]:
+                      permissions: list[str], execution_revision: str, *,
+                      initialization_capabilities: list[str] | None = None) -> EmbeddedPending[EmbeddedPool]:
         """
         Register definition with policy, permissions and execution_revision in this exact capacity.
         使用 policy、permissions 及 execution_revision 在此精确容量中注册 definition。
         Return the acknowledged member handle; native validation rejects foreign plugins and conflicting budgets.
         返回已确认成员句柄；原生校验拒绝外来插件及冲突预算。
+        initialization_capabilities narrows source callbacks; None inherits and [] denies all without adding grants.
+        initialization_capabilities 收窄源码回调；None 继承，空数组全部拒绝且不增加授权。
         """
         return self._runtime._submit({"type": "pool_register", "capacity_id": self.capacity_id,
                                      "definition": definition, "policy": policy, "permissions": permissions,
-                                     "execution_revision": execution_revision},
+                                     "execution_revision": execution_revision,
+                                     "initialization_capabilities": initialization_capabilities},
                                     lambda value: self._runtime.pool(value["pool_id"]))
 
 

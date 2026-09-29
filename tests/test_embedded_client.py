@@ -168,6 +168,92 @@ class EmbeddedClientNativeTests(EmbeddedNativeFixture, unittest.TestCase):
             "reuse": reuse, "serial": False, "backend": "in_process", "idle_ttl_ms": None, "max_uses": None,
         }, ["python.host"], "typed-v1"))
 
+    def verify_initialization_policy(self, names, grouped):
+        """
+        Execute real Lua with names and exact grouped placement; verify callback effects and denied registration.
+        按 names 及精确 grouped 归属执行真实 Lua；验证回调副作用及被拒注册。
+        Return after native business completion; the existing fixture retains shutdown ownership.
+        原生业务完成后返回；既有夹具保留关闭归属。
+        """
+        # Each test has its own pump and event list, so source denial cannot be hidden by previous callbacks.
+        # 每个测试拥有自己的泵和事件列表，避免先前回调掩盖源码拒绝。
+        calls = []
+        pump = EmbeddedCallbackPump(self.transport, self.runtime_id, CallbackPumpConfig(
+            max_concurrent_handlers=1, max_pending_commands=1, poll_interval_ms=1))
+        self.addCleanup(pump.close, 5)
+
+        def handler(arguments, context):
+            """
+            Record actual arguments and committed host effects through context; return the same value.
+            记录真实 arguments 并通过 context 报告已提交宿主副作用；返回相同值。
+            """
+            calls.append(arguments)
+            context.report_effects("committed")
+            return arguments
+
+        pump.register([HostCapability({
+            "name": "typed.callback", "version": "1.0.0", "description": "Initialization policy fixture",
+            "input_schema": True, "output_schema": True, "execution": "queued", "permissions": ["python.host"],
+            "scope": "invocation", "max_concurrent": 1, "max_call_ms": 10000,
+            "max_input_bytes": 1024, "max_output_bytes": 1024, "effects": "mutating", "idempotency": "none",
+        }, handler, "sync")], 5)
+        allowed = names is None or len(names) > 0
+        definition = {
+            "plugin_id": self.plugin_id, "generation": "init-generation", "package_root": self.package_root.as_posix(),
+            "dependencies_file": "dependencies.yaml", "workspace_root": None, "cwd": None, "mounts": {},
+            "security_partition": "python-test", "exports": [{"name": "call", "input_schema": True, "output_schema": True}],
+            "source": f"local init=vulcan.host.call('typed.callback','initialization'); assert(init.ok == {str(allowed).lower()}); return {{call=function() return vulcan.host.call('typed.callback','business').value end}}",
+        }
+        policy = {"kind": "shared", "min_resident_vms": 0, "max_resident_vms": 2,
+                  "max_running_calls": 2, "max_queued_calls": 4, "reuse": "reusable", "serial": False,
+                  "backend": "in_process", "idle_ttl_ms": None, "max_uses": None}
+        registrar = self.runtime
+        if grouped:
+            registrar = self.take(self.runtime.register_capacity(self.plugin_id, {
+                "resources": {name: policy[name] for name in ("kind", "min_resident_vms", "max_resident_vms", "max_running_calls")},
+                "max_queued_calls": policy["max_queued_calls"], "max_queued_bytes": self.runtime_limits["max_queued_bytes"],
+            }))
+        pool = self.take(registrar.register_pool(definition, policy, ["python.host"], "init-v1",
+                                                initialization_capabilities=names))
+        if grouped:
+            prewarm = self.take(pool.prewarm_instance(self.context, 5000))
+            self.assertEqual(prewarm.wait(5)["phase"], "succeeded")
+            self.take(prewarm.forget())
+        business = self.take(pool.submit("call", None, self.context, 5000))
+        done = business.wait(5)
+        self.assertEqual(done["phase"], "succeeded", done)
+        self.assertEqual(done["value"], "business")
+        self.assertEqual(calls, ["initialization", "business"] if allowed else ["business"])
+        self.take(business.forget())
+        for invalid_names, permissions in [(["missing.callback"], ["python.host"]), (["typed.callback"], [])]:
+            rejected = registrar.register_pool(definition, policy, permissions, "invalid-init",
+                                               initialization_capabilities=invalid_names)
+            with self.assertRaises(EmbeddedRuntimeError) as caught:
+                rejected.result(5)
+            self.assertEqual(caught.exception.code, "permission_denied")
+            rejected.forget()
+
+    def test_initialization_policy_empty_grouped_prewarm(self):
+        """
+        An empty list denies actual grouped prewarming callbacks while preserving business authority.
+        空列表拒绝真实分组预热回调，同时保留业务权威。
+        """
+        self.verify_initialization_policy([], True)
+
+    def test_initialization_policy_explicit_cold_call(self):
+        """
+        An exact list permits the requested cold initialization callback under existing host grants.
+        精确列表在既有宿主授权下允许请求的冷初始化回调。
+        """
+        self.verify_initialization_policy(["typed.callback"], False)
+
+    def test_initialization_policy_inherited_cold_call(self):
+        """
+        None preserves the original inherited callback authority without changing legacy callers.
+        None 保留原继承回调权威，不改变旧调用方。
+        """
+        self.verify_initialization_policy(None, False)
+
     def replace_persistent_runtime(self, persistence):
         """
         Close the current fixture owner and initialize its replacement with explicit persistence; return no value.
