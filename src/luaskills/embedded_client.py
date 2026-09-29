@@ -508,6 +508,15 @@ class EmbeddedPool:
         """
         return self._runtime._submit({"type": "pool_status", "pool_id": self.pool_id}, lambda value: value)
 
+    def reusable_status(self) -> EmbeddedPending[wire.OutputEmbeddedReusablePoolSnapshot]:
+        """
+        Query this exact reusable pool and return confirmed idle readiness separately from physical usage.
+        查询此精确可复用池，将已确认空闲就绪与物理用量分开返回。
+        Reject unknown or non-reusable pools; this control observation never reserves future idle instances.
+        拒绝未知或非复用池；此控制观测绝不预留未来空闲实例。
+        """
+        return self._runtime._submit({"type": "pool_reusable_status", "pool_id": self.pool_id}, lambda value: value)
+
     def request_close(self) -> EmbeddedPending[None]:
         """
         Request permanent pool drainage; the acknowledgement does not imply actual VM destruction.

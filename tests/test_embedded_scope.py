@@ -454,12 +454,29 @@ class EmbeddedScopeNativeTests(EmbeddedNativeFixture, unittest.TestCase):
         pending.forget()
         self.assertTrue(entered.wait(2))
         self.assertTrue(self.command({"type": "operation_status", "operation_id": operation.operation_id})["context"]["prewarm"])
+        # A live initializer owns a physical VM but no borrowable lease.
+        # 在途初始化器拥有物理 VM，但没有可借用租约。
+        readiness = pool.reusable_status()
+        initializing = readiness.result(5)
+        readiness.forget()
+        self.assertEqual(initializing["pool_id"], pool.pool_id)
+        self.assertEqual(initializing["ready"], 0)
+        self.assertEqual(initializing["unavailable"], 1)
+        self.assertEqual(initializing["physical"]["resident"], 1)
         scope = self.scope(pump)
         with self.assertRaises(TimeoutError):
             scope.close(0.01)
         self.assertFalse(scope.status["closed"])
         self.assertFalse(pump.status["closed"])
         self.assertEqual(self.command({"type": "pool_status", "pool_id": pool.pool_id})["resident"], 1)
+        # The control query remains available after admission closes, even before callback drainage.
+        # 入场关闭后控制查询仍可用，即使回调尚未排空。
+        readiness = pool.reusable_status()
+        draining = readiness.result(5)
+        readiness.forget()
+        self.assertTrue(draining["closing"])
+        self.assertEqual(draining["ready"], 0)
+        self.assertEqual(draining["physical"]["resident"], 1)
         release.set()
         scope.close(5)
         self.assertTrue(scope.status["closed"])

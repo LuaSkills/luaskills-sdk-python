@@ -606,6 +606,15 @@ return {call=function() count=count+1; return count end}""",
         # Only a later ordinary call may increment this instance's private business counter.
         # 仅后续普通调用可递增此实例的私有业务计数器。
         pool = self.make_pool("local count=0; return {call=function() count=count+1; return count end}")
+        # Querying a cold pool preserves its identity without allocating any VM.
+        # 查询冷池保留其身份，且不分配任何 VM。
+        cold = pool.reusable_status()
+        self.assertTrue(cold.receipt._control)
+        initial = self.take(cold)
+        self.assertEqual(initial["pool_id"], pool.pool_id)
+        self.assertEqual(initial["ready"], 0)
+        self.assertEqual(initial["physical"]["resident"], 0)
+        self.assertEqual(initial["max_resident_vms"], 2)
         instances = set()
         for _ in range(2):
             # Admission and native completion are separate queryable boundaries.
@@ -622,6 +631,7 @@ return {call=function() count=count+1; return count end}""",
             self.assertNotIn(identity, instances)
             instances.add(identity)
             self.take(operation.forget())
+            self.assertEqual(self.take(pool.reusable_status())["ready"], len(instances))
         self.assertEqual(self.take(pool.status())["resident"], len(instances))
         # Full-pool failure must not prevent reuse of already confirmed warm instances.
         # 满池失败不能阻止复用已确认预热实例。
@@ -636,10 +646,33 @@ return {call=function() count=count+1; return count end}""",
             self.take(operation.forget())
         self.take(pool.request_close())
         closed = pool.prewarm_instance(self.context, 5000)
+        # Closing preserves query access while fencing all borrowable instances.
+        # 关闭保留查询访问，同时阻止借用任何实例。
+        retired = self.take(pool.reusable_status())
+        self.assertEqual(retired["pool_id"], pool.pool_id)
+        self.assertTrue(retired["closing"])
+        self.assertEqual(retired["ready"], 0)
         with self.assertRaises(EmbeddedRuntimeError) as error:
             closed.result(5)
         self.assertEqual(error.exception.code, "closed")
         closed.forget()
+        self.assertFalse(self.driver.commands)
+
+    def test_reusable_readiness_rejects_nonreusable_and_unknown_pools(self):
+        """
+        Query exact invalid or unknown pool handles and retain native errors without executing source.
+        查询精确无效或未知池句柄，并保留原生错误而不执行源码。
+        """
+        # Registration does not evaluate the deliberately invalid initialization source.
+        # 登记不求值故意无效的初始化源码。
+        once = self.make_pool("error('query must not execute source')", reuse="single_call")
+        for pool, code in ((once, "invalid_argument"), (self.runtime.pool("unknown-readiness-pool"), "not_found")):
+            pending = pool.reusable_status()
+            with self.assertRaises(EmbeddedRuntimeError) as error:
+                pending.result(5)
+            self.assertEqual(error.exception.code, code)
+            pending.forget()
+        self.assertEqual(self.take(once.status())["resident"], 0)
         self.assertFalse(self.driver.commands)
 
     def test_shared_pool_calls_preserve_results_errors_and_explicit_forgetting(self):

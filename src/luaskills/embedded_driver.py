@@ -25,7 +25,7 @@ from .embedded_transport import EMBEDDED_CONTROL_WORKERS, EmbeddedRuntimeError, 
 _ROOT_CONTROLS = frozenset({"describe", "runtime_status", "runtime_close", "runtime_free"})
 _RUNTIME_CONTROLS = frozenset({
     "capacity_status", "capacity_policy", "capacity_revise", "capacity_close", "capacity_forget",
-    "plugin_status", "plugin_close", "plugin_forget", "pool_status", "pool_close", "pool_forget",
+    "plugin_status", "plugin_close", "plugin_forget", "pool_status", "pool_reusable_status", "pool_close", "pool_forget",
     "pool_revoke_permission", "session_status", "session_close", "session_forget",
     "operation_status", "operation_list", "operation_cancel", "operation_forget", "capabilities_list",
     "capability_status", "capability_unregister", "capability_forget", "host_requests_take",
