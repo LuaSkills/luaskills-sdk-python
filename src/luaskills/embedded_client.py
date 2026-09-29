@@ -542,6 +542,20 @@ class EmbeddedPool:
             "pool_id": self.pool_id, "export": export, "arguments": arguments, "context": context}},
             lambda value: self._runtime.operation(value["operation_id"]))
 
+    def prewarm_instance(self, context: wire.InputLuaInvocationContext,
+                         timeout_ms: int) -> EmbeddedPending[EmbeddedOperation]:
+        """
+        Initialize one additional VM in this exact reusable pool without invoking a business export.
+        在此精确可复用池初始化一个额外 VM，不调用业务导出。
+        context supplies trusted host metadata; timeout_ms is the original native execution budget.
+        context 提供可信宿主元数据；timeout_ms 为原始原生执行预算。
+        Return a retained admission receipt; its operation reports instance_id after successful initialization.
+        返回保留入场回执；所得操作在初始化成功后报告 instance_id。
+        """
+        return self._runtime._submit({"type": "instance_prewarm", "timeout_ms": timeout_ms, "request": {
+            "pool_id": self.pool_id, "context": context}},
+            lambda value: self._runtime.operation(value["operation_id"]))
+
     def open_session(self, timeout_ms: int) -> EmbeddedPending[EmbeddedSessionOpen]:
         """
         Reserve a fixed session with initialization timeout_ms; return both independently queryable handles.

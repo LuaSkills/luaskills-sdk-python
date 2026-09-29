@@ -598,6 +598,50 @@ return {call=function() count=count+1; return count end}""",
         self.take(capacity.forget())
         self.assertEqual(self.take(self.runtime.plugin(self.plugin_id).status())["committed_resident_vms"], 0)
 
+    def test_prewarm_creates_additional_instances_and_preserves_operation_ownership(self):
+        """
+        Initialize two distinct real VMs without business execution and retain full-pool and close failures.
+        初始化两个不同真实 VM 且不执行业务，并保留满池及关闭失败。
+        """
+        # Only a later ordinary call may increment this instance's private business counter.
+        # 仅后续普通调用可递增此实例的私有业务计数器。
+        pool = self.make_pool("local count=0; return {call=function() count=count+1; return count end}")
+        instances = set()
+        for _ in range(2):
+            # Admission and native completion are separate queryable boundaries.
+            # 入场与原生完成是分离的可查询边界。
+            operation = self.take(pool.prewarm_instance(self.context, 5000))
+            result = operation.wait(5)
+            self.assertEqual(result["phase"], "succeeded", result)
+            self.assertEqual(result["context"]["kind"], "module")
+            self.assertTrue(result["context"]["prewarm"])
+            self.assertIsNone(result["context"]["export"])
+            self.assertEqual(result["context"]["pool_id"], pool.pool_id)
+            identity = result["value"]["instance_id"]
+            self.assertIsInstance(identity, str)
+            self.assertNotIn(identity, instances)
+            instances.add(identity)
+            self.take(operation.forget())
+        self.assertEqual(self.take(pool.status())["resident"], len(instances))
+        # Full-pool failure must not prevent reuse of already confirmed warm instances.
+        # 满池失败不能阻止复用已确认预热实例。
+        rejected = self.take(pool.prewarm_instance(self.context, 5000))
+        failure = rejected.wait(5)
+        self.assertEqual(failure["phase"], "failed")
+        self.assertEqual(failure["error"]["code"], "capacity_exceeded")
+        self.take(rejected.forget())
+        for count in (1, 2):
+            operation = self.take(pool.submit("call", None, self.context, 5000))
+            self.assertEqual(operation.wait(5)["value"], count)
+            self.take(operation.forget())
+        self.take(pool.request_close())
+        closed = pool.prewarm_instance(self.context, 5000)
+        with self.assertRaises(EmbeddedRuntimeError) as error:
+            closed.result(5)
+        self.assertEqual(error.exception.code, "closed")
+        closed.forget()
+        self.assertFalse(self.driver.commands)
+
     def test_shared_pool_calls_preserve_results_errors_and_explicit_forgetting(self):
         """
         Execute successful and failing Lua calls through typed handles; preserve snapshots until explicit forget.

@@ -413,6 +413,59 @@ class EmbeddedScopeNativeTests(EmbeddedNativeFixture, unittest.TestCase):
         self.assertFalse(scope._thread.is_alive())
         self.assertEqual(calls, [None, "closing"])
 
+    def test_scope_retains_prewarm_initializer_after_close_observer_timeout(self):
+        """
+        Keep prewarm ownership through a timed-out scope observer until the real initializer callback returns.
+        跨作用域观察超时保留预热归属，直到真实初始化回调返回。
+        """
+        # The release gate also runs during cleanup after assertion failures.
+        # 断言失败后的清理也执行释放门禁。
+        pump = EmbeddedCallbackPump(self.transport, self.runtime_id, CallbackPumpConfig(
+            max_concurrent_handlers=1, max_pending_commands=4, poll_interval_ms=1))
+        self.addCleanup(pump.close, 5)
+        entered = threading.Event()
+        release = threading.Event()
+        self.addCleanup(release.set)
+        calls = []
+
+        def handler(arguments, context):
+            """
+            Hold real initialization work until release, reporting its actual late effect before returning null.
+            保持真实初始化工作直到释放，在返回空值前报告其实际迟到副作用。
+            """
+            calls.append(arguments)
+            entered.set()
+            self.assertTrue(release.wait(5))
+            context.report_effects("committed")
+            return None
+
+        pump.register([HostCapability({
+            "name": "scope.prewarm", "version": "1.0.0", "description": "Owned prewarm callback",
+            "input_schema": True, "output_schema": True, "execution": "queued", "permissions": ["python.host"],
+            "scope": "invocation", "max_concurrent": 1, "max_call_ms": 10000,
+            "max_input_bytes": 1024, "max_output_bytes": 1024, "effects": "mutating", "idempotency": "none",
+        }, handler, "sync")], 5)
+        # A typed operation wraps the exact pool registered by the existing trusted native fixture.
+        # 类型化操作包装既有可信原生夹具注册的精确池。
+        pool = self.runtime.pool(self.pool(
+            "assert(vulcan.host.call('scope.prewarm','initialization').ok); return {call=function() error('business must not execute') end}"))
+        pending = pool.prewarm_instance({"request_context": None, "client_budget": None, "tool_config": None}, 10000)
+        operation = pending.result(5)
+        pending.forget()
+        self.assertTrue(entered.wait(2))
+        self.assertTrue(self.command({"type": "operation_status", "operation_id": operation.operation_id})["context"]["prewarm"])
+        scope = self.scope(pump)
+        with self.assertRaises(TimeoutError):
+            scope.close(0.01)
+        self.assertFalse(scope.status["closed"])
+        self.assertFalse(pump.status["closed"])
+        self.assertEqual(self.command({"type": "pool_status", "pool_id": pool.pool_id})["resident"], 1)
+        release.set()
+        scope.close(5)
+        self.assertTrue(scope.status["closed"])
+        self.assertTrue(pump.status["closed"])
+        self.assertEqual(calls, ["initialization"])
+
     def test_scope_reports_callback_recovery_then_retries_without_replaying_handler(self):
         """
         Surface pump delivery failure as retryable drainage, then join exact cleanup after explicit recovery.

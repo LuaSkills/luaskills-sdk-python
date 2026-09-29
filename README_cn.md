@@ -427,6 +427,8 @@ finally:
 
 `runtime.register_plugin(...)`、`register_pool(...)` 返回已确认句柄。`pool.submit(export, arguments, context, timeout_ms)` 和 `session.submit(...)` 返回操作句柄，其中 `timeout_ms` 是核心执行截止预算。`pool.open_session(timeout_ms)` 返回 `EmbeddedSessionOpen`，同时包含 `session` 和独立 `initialization` 操作；必须观察初始化操作，不能仅凭会话回执认定初始化成功。
 
+`pool.prewarm_instance(context, timeout_ms)` 返回 `EmbeddedPending[EmbeddedOperation]`，为明确可复用池初始化一个**额外** VM。它使用工作通道并保留原回执；独立观察所得操作，成功时读取 `value["instance_id"]`。预热不运行业务导出，但初始化仍可调用已授权宿主能力并产生副作用。满池请求以 `capacity_exceeded` 完成失败；单次／会话池在入场时拒绝。取消、持久化恢复及 `EmbeddedRuntimeScope` 清理继续保留真实回调归属。此原语不接受目标总数，也不保证永久驻留；空闲及压力策略继续生效。开发接口要求匹配的 `explicit_instance_prewarm_v1` 契约及原生库。
+
 `operation.wait(timeout=..., poll_interval=...)` 和 `await operation.wait_async(poll_interval=...)` 通过短状态命令轮询，返回包含失败及副作用证据的完整终态快照。同步超时及 `asyncio.wait_for` 仅影响观察。显式 `operation.cancel()` 请求协作取消，返回布尔值不代表完成。轮询自动消费成功的只读 SDK 回执，中断或失败的回执保留在 `driver.commands` 供恢复。`operation.forget()` 删除终态**核心记录**，其返回的待完成命令回执也须处理并遗忘。
 
 运行时、插件、池和会话的 `request_close()` 返回关闭确认；执行 `free()` 或 `forget()` 前应核对实际原生状态。类型句柄借用驱动器。设置 `LUASKILLS_LIB` 与 `PYTHONPATH=src` 后，用 `-p test_embedded_client.py` 验证真实公共／专用池、固定会话状态、生命周期屏障及迟到提交回调。
