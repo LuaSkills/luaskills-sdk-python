@@ -6,7 +6,7 @@ Main LuaSkills repository: [LuaSkills/luaskills](https://github.com/LuaSkills/lu
 
 Python SDK for integrating the LuaSkills runtime through the public JSON FFI surface.
 
-`0.5.7` is the current release line. It retains the strict package-level skill configuration contract and defaults runtime assets to LuaSkills core `v0.5.7`, vldb-controller `v0.2.3`, and vldb-sqlite `v0.1.6`.
+This source targets the `0.6.0` release line; publication and artifact verification follow the release workflow. It retains the strict package-level skill configuration contract and defaults runtime assets to LuaSkills core `v0.6.0`, vldb-controller `v0.2.3`, and vldb-sqlite `v0.1.6`.
 
 The SDK wraps native library loading, JSON FFI buffers, engine lifecycle, formal skill roots, authority-aware management calls, skill config, provider callbacks, host-tool callbacks, and runtime asset installation. Hosts should not need to hand-write low-level FFI buffers or JSON envelopes for normal integration.
 
@@ -39,7 +39,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/deps/sync_runtime_as
 RUNTIME_ROOT=/opt/luaskills scripts/deps/sync_runtime_assets.sh all vldb-controller
 ```
 
-Supported targets are `all`, `luaskills`, `lua`, and `vldb`. VLDB presets are `none`, `vldb-controller`, `vldb-direct`, and `host-callback`. The scripts pin LuaSkills to `v0.5.7` by default and accept explicit release-version overrides.
+Supported targets are `all`, `luaskills`, `lua`, and `vldb`. VLDB presets are `none`, `vldb-controller`, `vldb-direct`, and `host-callback`. The scripts pin LuaSkills to `v0.6.0` by default and accept explicit release-version overrides.
 
 `install-runtime` downloads GitHub Release assets, verifies `.sha256` sidecars, extracts native files and Lua runtime packages, and writes:
 
@@ -114,7 +114,7 @@ The SDK keeps LuaSkills core aligned with the SDK release and resolves runtime p
 ## Version Alignment
 
 - Keep the SDK and LuaSkills core on the same current release line whenever possible.
-- The current SDK defaults to LuaSkills core tag `v0.5.7`.
+- This source defaults to LuaSkills core tag `v0.6.0`.
 - Runtime packages and native dependencies still come from the split `LuaSkills/luaskills-packages` and related release assets.
 - SDK default host options pass `runtime_root`, null managed-root override slots, and the complete stable `managed_runtime_config`; LuaSkills derives the fixed data layout until the host explicitly overrides roots or policy.
 - Host tools live directly under `runtime_root/bin`, not `runtime_root/bin/tools`.
@@ -399,7 +399,7 @@ Wire types live in `luaskills.embedded_contract`: separate `Input*` and `Output*
 
 Embedded requests accept built-in JSON values with string object keys. Tuples, custom nested containers, key coercion, cycles, non-finite numbers, out-of-range integers and unpaired Unicode surrogates are rejected before native submission. Response decoding rejects duplicate decoded keys and preserves negative zero, integral floats, full integer bits and explicit null. A malformed response still follows the transport's owned-result release protocol. This strict codec applies to the new embedded API; legacy JSON FFI behavior is unchanged.
 
-`EmbeddedTransport` binds the five transport entrypoints and the read-only `luaskills_ffi_embedded_describe_v1` bootstrap. This development API requires a matching locally built core exporting those symbols; the existing 0.5.7 release assets do not provide it. The version bump and published asset alignment are handled at release freeze.
+`EmbeddedTransport` binds the five transport entrypoints and the read-only `luaskills_ffi_embedded_describe_v1` bootstrap. This API requires a matching core exporting those symbols; the historical 0.5.7 release assets do not provide it. Use a matching local build during development, and verify published assets through the release workflow.
 
 Before allocating a transport, the constructor checks the exact generated core version, JSON/ABI versions, description version, contract SHA-256, required commands and capabilities, in-process backend, operating system and interpreter pointer width. The native loader enforces machine-code compatibility. Missing bootstrap symbols or incompatible metadata raise `EmbeddedCompatibilityError`; native bootstrap status failures retain `EmbeddedTransportError`. There is no fallback to a legacy core. Metadata bytes are copied under the core-owned bound while retaining the library and are never passed to any result-free function. `transport.core_description` returns an independent generated `OutputCoreDescription` snapshot, including build-input evidence. Those hashes describe selected source/compiler inputs; they do not authenticate a binary or replace release artifact verification. A consuming Rust workspace may resolve dependencies differently from the reported package lockfile.
 
@@ -610,24 +610,35 @@ PYTHONPATH=src python -m luaskills.cli version --runtime-root D:/runtime/luaskil
 
 ## Publishing
 
-The release version is stored in `VERSION`. Keep `VERSION` and `pyproject.toml` aligned before publishing.
+`pyproject.toml`'s `project.version` is the SDK version authority; `VERSION` must match its mirror. The explicit core tag/commit is independent of the SDK version and must match the packaged default runtime asset tag.
 
 For one unified ecosystem release, publish `LuaSkills/luaskills-packages` first, then publish `LuaSkills/luaskills`, so the default runtime installer assets for this SDK already exist.
 
-Before publishing:
+Commit `.github/workflows/sdk-release.yml` to the default branch before dispatching **Python SDK release**. Supply the same full `source_sha` as the event and workflow definition, plus the exact independently published `core_tag` and `core_commit`. `artifact-only` runs acceptance without publication. The workflow builds one wheel/sdist pair, requires `twine check --strict`, and tests those same bytes on every core-declared platform with minimum/current supported Python through independent installed consumers. Native skips cannot pass.
+
+Local distribution acceptance before public core prerequisites are available:
 
 ```bash
-python -m build
-twine check dist/*
+python scripts/verify_embedded_native_distribution.py --wheel <exact-wheel> --sdist <exact-sdist> --library <frozen-library> --library-sha256 <sha256> --description <actual-description-json>
 ```
 
-Use a new patch version for every PyPI publish. Published versions cannot be overwritten.
+Formal publication first verifies the exact public GitHub core release and actual Cargo registry consumer through that frozen core checkout's public helper. Each fresh runner derives its exact Rust/Cargo toolchain from authenticated core release records through the shared `github-only` and `toolchain-inputs` gates. Immediately before PyPI upload it repeats the complete public gate; Trusted Publishing uploads the measured distributions without rebuilding. Official existing wheel/sdist files must match the tested bytes before recovery uploads only the missing files; unknown state or different bytes fail. A cold official PyPI installation then consumes the same core library. Use a new version for each distinct PyPI publication; published files cannot be overwritten.
+
+The account owner must configure the `production` environment and bind PyPI's `luaskills-sdk` Trusted Publisher to `LuaSkills/luaskills-sdk-python`, `sdk-release.yml`, and `production`. Account binding and production configuration have not been verified by local tests. No PAT or account login is part of this workflow. See [PyPI Trusted Publisher configuration](https://docs.pypi.org/trusted-publishers/adding-a-publisher/).
+
+The independent `candidate-evidence` job freezes packages, actual native report/log bytes and core evidence in a signed inventory before registry or public Release mutation. Its artifact name comes from the frozen core `sdk_recovery.py` authority, with its actual upload ID recorded separately. The main `v{SDK_VERSION}` Release contains exactly those original signed files. A completed original attempt may have failed later during publication; its required candidate gates must still all have succeeded, and its original status and `artifact-only` mode remain unchanged.
+
+To resume, dispatch `mode=recover` from the identical fixed SDK SHA with explicit `candidate_run_id`, `candidate_run_attempt` and `candidate_artifact_id`. Missing, expired or altered original evidence fails before upload; the workflow never rebuilds a replacement or selects a latest attempt. An original artifact-only candidate is evidence, not publication authorization: only this new explicit protected publish/recover operation can perform fresh core recheck, exact PyPI reuse/partial upload and cold consumption. Equal main Release bytes are reused without replacement or appending. A new signed completion binds the original manifest, bundle, upload ID, exact main Release and fresh consumers in the independent `recovery-v{SDK_VERSION}-r{COMPLETION_RUN_ID}-a{COMPLETION_ATTEMPT}` Release. Every Release receives all assets while draft, then publishes.
+
+`formal-proof` requires `--candidate-run-id`, `--candidate-run-attempt`, `--completion-run-id`, `--completion-run-attempt` and `--completion-source-sha` alongside the original `--source-sha`, SDK/core identities and platform. Both official signatures and explicit attempt APIs are checked; the specified completion attempt must be fully successful. The first version requires completion source to equal original SDK source. Schema 2 `accepted.json` preserves the two identities and binds a new `fresh-formal-consumer.json` digest after fresh complete core registry and cold PyPI/native consumption. There is no ambiguous `--run-id` alias. Local fixtures prove gate logic, not real OIDC publication or all hosted platforms. Release fixtures load the shared authority only from an explicit `SDK_RELEASE_TEST_CORE_ROOT` checkout; run `python -X utf8 tests/test_sdk_release.py` with that environment variable set.
 
 Recommended unified publish order: `luaskills-packages` -> `luaskills` core release -> TypeScript SDK -> Python SDK -> Go SDK -> SDK examples releases.
 
-After PyPI publishes successfully, run the GitHub Actions workflow **Examples Release** manually. It reads `VERSION`, installs `luaskills-sdk=={VERSION}` from PyPI, installs LuaSkills runtime assets, runs the examples, then creates or updates the `examples-v{VERSION}` GitHub Release with:
+Core GitHub publication and actual Cargo consumption are mandatory prerequisites for Python. TypeScript publication is independent and is not a Python gate dependency; Go's installer validation consumes both actual TypeScript and Python publications. Each SDK retains its own version and source SHA.
+
+After the explicit SDK completion attempt succeeds, dispatch **Examples Release** from the same fixed default-branch SDK SHA. Supply both candidate and completion run IDs/attempts, the independent completion source SHA, exact SDK/core versions, core SHA and matching core platform. It verifies both durable signatures, cold-installs the exact hashed official PyPI package and executes the embedded example against the recorded core library. It archives tracked examples only, excluding installed environments and generated runtime files. Fixed timestamps, sorted stored ZIP members and stable package proof make ZIP/sidecar bytes reproducible across retries; the workflow also uploads those exact files as an artifact before public mutation. The independent `examples-v{SDK_VERSION}` Release receives all assets while draft, then publishes:
 
 - `luaskills-sdk-python-examples-{VERSION}.zip`
 - `luaskills-sdk-python-examples-{VERSION}.zip.sha256`
 
-The examples release tag intentionally uses the `examples-v` prefix because it is an examples asset release, not an SDK package version.
+The `examples-v` prefix preserves the existing example download protocol and keeps example assets separate from the final SDK Release. Existing equal bytes are reused; different bytes are refused without `--clobber`.

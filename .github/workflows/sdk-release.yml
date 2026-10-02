@@ -1,0 +1,421 @@
+name: Python SDK release
+run-name: Python SDK ${{ inputs.source_sha }} ${{ inputs.mode }}
+
+# Run the definition from the default branch at the same full SHA as SDK source.
+# 从默认分支运行定义，且与 SDK 源码采用相同完整 SHA。
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact default-branch SDK commit (40 lowercase hex characters)
+        required: true
+      core_tag:
+        description: Independently published exact core tag
+        required: true
+      core_commit:
+        description: Exact core commit (40 lowercase hex characters)
+        required: true
+      mode:
+        description: Freeze artifacts, publish a new candidate, or recover an explicit original candidate
+        type: choice
+        options: [artifact-only, publish, recover]
+        default: artifact-only
+      candidate_run_id:
+        description: Original candidate run ID, required only for recover
+        required: false
+      candidate_run_attempt:
+        description: Original candidate attempt, required only for recover
+        required: false
+      candidate_artifact_id:
+        description: Actual original signed inventory upload artifact ID, required only for recover
+        required: false
+
+permissions:
+  contents: read
+
+# One SDK version cannot have two concurrent publishers modifying its public identity.
+# 同一 SDK 版本不能由两个并发发布者修改公共身份。
+concurrency:
+  group: python-sdk-release
+  cancel-in-progress: false
+
+jobs:
+  freeze-build:
+    if: inputs.mode != 'recover'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    outputs:
+      matrix: ${{ steps.freeze.outputs.matrix }}
+      consumer_platform: ${{ steps.freeze.outputs.consumer_platform }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.source_sha }}
+          path: sdk
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: LuaSkills/luaskills
+          ref: ${{ inputs.core_commit }}
+          path: core
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        id: control
+        with:
+          python-version: '3.14'
+      - name: Install release-only tools
+        run: '"${{ steps.control.outputs.python-path }}" -m pip install $("${{ steps.control.outputs.python-path }}" sdk/scripts/release/sdk_release.py tool-requirements)'
+      - name: Resolve actual published core toolchain through the common authority
+        id: bootstrap
+        env:
+          CORE_TAG: ${{ inputs.core_tag }}
+          CORE_COMMIT: ${{ inputs.core_commit }}
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          "${{ steps.control.outputs.python-path }}" -X utf8 sdk/scripts/release/sdk_release.py bootstrap
+          --core-tag "$CORE_TAG" --core-commit "$CORE_COMMIT" --core-root core
+          --output "${{ runner.temp }}/bootstrap" --github-output "$GITHUB_OUTPUT"
+      # Installation follows authenticated release records; complete gate verifies actual Cargo/compiler identity.
+      # 安装遵循已认证发布记录；完整门禁验证实际 Cargo 及编译器身份。
+      - name: Install the exact published core toolchain
+        env:
+          TOOLCHAIN: ${{ steps.bootstrap.outputs.toolchain }}
+        run: rustup toolchain install "$TOOLCHAIN" --profile minimal
+      - name: Freeze source and complete public core prerequisites
+        id: freeze
+        working-directory: sdk
+        env:
+          SDK_SOURCE_SHA: ${{ inputs.source_sha }}
+          CORE_TAG: ${{ inputs.core_tag }}
+          CORE_COMMIT: ${{ inputs.core_commit }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          MODE: ${{ inputs.mode }}
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          "${{ steps.control.outputs.python-path }}" -X utf8 scripts/release/sdk_release.py freeze
+          --source-sha "$SDK_SOURCE_SHA" --core-tag "$CORE_TAG" --core-commit "$CORE_COMMIT"
+          --default-branch "$DEFAULT_BRANCH" --core-root ../core
+          --mode "$MODE"
+          --output "${{ runner.temp }}/release" --github-output "$GITHUB_OUTPUT"
+      - name: Build wheel and sdist once; require strict twine
+        working-directory: sdk
+        run: >-
+          "${{ steps.control.outputs.python-path }}" -X utf8 scripts/release/sdk_release.py build
+          --plan "${{ runner.temp }}/release/plan.json" --output "${{ runner.temp }}/dist"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: frozen-release
+          path: ${{ runner.temp }}/release
+          if-no-files-found: error
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: tested-distributions
+          path: ${{ runner.temp }}/dist
+          if-no-files-found: error
+
+  native:
+    if: inputs.mode != 'recover'
+    name: native-${{ matrix.platform }}-${{ matrix.python_role }}
+    needs: freeze-build
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.freeze-build.outputs.matrix) }}
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.source_sha }}
+          path: sdk
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: LuaSkills/luaskills
+          ref: ${{ inputs.core_commit }}
+          path: core
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: frozen-release
+          path: evidence
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: tested-distributions
+          path: distributions
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        id: control
+        with:
+          python-version: '3.14'
+      - name: Resolve portable core inputs through its frozen public authority
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: >-
+          "${{ steps.control.outputs.python-path }}" -X utf8 core/scripts/release/sdk_prerequisites.py sdk-inputs
+          --input evidence/core/prerequisites.json --platform "$PLATFORM" --output resolved-inputs.json
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        id: native-python
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install native gate tools on the explicit tested interpreter
+        run: '"${{ steps.native-python.outputs.python-path }}" -m pip install $("${{ steps.native-python.outputs.python-path }}" sdk/scripts/release/sdk_release.py tool-requirements)'
+      - name: Accept the same wheel and sdist in independent installed consumers
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          PYTHON_ROLE: ${{ matrix.python_role }}
+        run: >-
+          "${{ steps.native-python.outputs.python-path }}" -X utf8 sdk/scripts/release/sdk_release.py validate
+          --plan evidence/plan.json --artifacts distributions --inputs resolved-inputs.json
+          --platform "$PLATFORM" --python-role "$PYTHON_ROLE" --output report.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: native-${{ matrix.platform }}-${{ matrix.python_role }}
+          path: |
+            report.json
+            report.log
+          if-no-files-found: error
+
+  aggregate:
+    if: inputs.mode != 'recover'
+    needs: [freeze-build, native]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.source_sha }}
+          path: sdk
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        id: control
+        with:
+          python-version: '3.14'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: frozen-release
+          path: evidence
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: tested-distributions
+          path: distributions
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: native-*
+          path: reports
+      - name: Require every platform, interpreter, native identity and exact package byte
+        run: >-
+          "${{ steps.control.outputs.python-path }}" -X utf8 sdk/scripts/release/sdk_release.py aggregate
+          --plan evidence/plan.json --artifacts distributions --prerequisites evidence/core/prerequisites.json
+          --reports reports --output aggregate.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: accepted-sdk
+          path: aggregate.json
+          if-no-files-found: error
+
+  candidate-evidence:
+    if: inputs.mode != 'recover'
+    needs: aggregate
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    outputs:
+      artifact_id: ${{ steps.inventory.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.source_sha }}
+          path: sdk
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: LuaSkills/luaskills
+          ref: ${{ inputs.core_commit }}
+          path: core
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        id: control
+        with:
+          python-version: '3.14'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: frozen-release
+          path: evidence
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: tested-distributions
+          path: distributions
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: accepted-sdk
+          path: accepted
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: native-*
+          path: reports
+      - run: '"${{ steps.control.outputs.python-path }}" -m pip install $("${{ steps.control.outputs.python-path }}" sdk/scripts/release/sdk_release.py tool-requirements)'
+      # Freeze and sign the original inventory before any registry or public Release mutation.
+      # 在任何 registry 或公共 Release 修改前冻结并签署原始清单。
+      - name: Prepare original candidate inventory
+        id: candidate
+        run: >-
+          "${{ steps.control.outputs.python-path }}" -X utf8 sdk/scripts/release/sdk_release.py candidate-prepare
+          --aggregate accepted/aggregate.json --artifacts distributions --evidence evidence --reports reports
+          --core-root core --output candidate --github-output "$GITHUB_OUTPUT"
+      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26
+        id: original-signature
+        with:
+          subject-path: candidate/recovery-binding.json
+      - name: Authenticate the actual signed inventory
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          "${{ steps.control.outputs.python-path }}" -X utf8 sdk/scripts/release/sdk_release.py candidate-seal
+          --prepared candidate --bundle "${{ steps.original-signature.outputs.bundle-path }}" --core-root core
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        id: inventory
+        with:
+          name: ${{ steps.candidate.outputs.artifact_name }}
+          path: candidate/*
+          if-no-files-found: error
+
+  publish:
+    if: >-
+      always() && ((inputs.mode == 'publish' && needs.candidate-evidence.result == 'success') || inputs.mode == 'recover')
+    needs: candidate-evidence
+    runs-on: ubuntu-24.04
+    # Account owner must bind PyPI project/repository/workflow/environment before formal publication.
+    # 正式发布前，账号所有者必须绑定 PyPI 项目、仓库、工作流及 environment。
+    environment: production
+    permissions:
+      contents: write
+      # Downloading the explicit original Actions artifact requires repository Actions read permission.
+      # 下载明确原始 Actions 制品要求仓库 Actions 只读权限。
+      actions: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.source_sha }}
+          path: sdk
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: LuaSkills/luaskills
+          ref: ${{ inputs.core_commit }}
+          path: core
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        id: control
+        with:
+          python-version: '3.14'
+      - name: Resolve published toolchain for the fresh runner
+        id: bootstrap
+        env:
+          CORE_TAG: ${{ inputs.core_tag }}
+          CORE_COMMIT: ${{ inputs.core_commit }}
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          "${{ steps.control.outputs.python-path }}" -X utf8 sdk/scripts/release/sdk_release.py bootstrap
+          --core-tag "$CORE_TAG" --core-commit "$CORE_COMMIT" --core-root core
+          --output "${{ runner.temp }}/bootstrap" --github-output "$GITHUB_OUTPUT"
+      - name: Install the exact published core toolchain
+        env:
+          TOOLCHAIN: ${{ steps.bootstrap.outputs.toolchain }}
+        run: rustup toolchain install "$TOOLCHAIN" --profile minimal
+      - name: Install pinned public consumer tools
+        run: '"${{ steps.control.outputs.python-path }}" -m pip install $("${{ steps.control.outputs.python-path }}" sdk/scripts/release/sdk_release.py tool-requirements)'
+      - name: Authenticate the explicit original candidate and exact attempt
+        env:
+          MODE: ${{ inputs.mode }}
+          SDK_SOURCE_SHA: ${{ inputs.source_sha }}
+          CORE_TAG: ${{ inputs.core_tag }}
+          CORE_COMMIT: ${{ inputs.core_commit }}
+          ORIGINAL_RUN: ${{ inputs.candidate_run_id }}
+          ORIGINAL_ATTEMPT: ${{ inputs.candidate_run_attempt }}
+          ORIGINAL_ARTIFACT: ${{ inputs.candidate_artifact_id }}
+          NEW_ARTIFACT: ${{ needs.candidate-evidence.outputs.artifact_id }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "$MODE" = publish ]; then
+            ORIGINAL_RUN="$GITHUB_RUN_ID"
+            ORIGINAL_ATTEMPT="$GITHUB_RUN_ATTEMPT"
+            ORIGINAL_ARTIFACT="$NEW_ARTIFACT"
+          fi
+          "${{ steps.control.outputs.python-path }}" -X utf8 sdk/scripts/release/sdk_release.py candidate-resolve \
+            --source-sha "$SDK_SOURCE_SHA" --core-tag "$CORE_TAG" --core-commit "$CORE_COMMIT" \
+            --candidate-run-id "$ORIGINAL_RUN" --candidate-run-attempt "$ORIGINAL_ATTEMPT" \
+            --candidate-artifact-id "$ORIGINAL_ARTIFACT" --core-root core --output original-candidate
+      - name: Fresh public GitHub and Cargo consumer recheck immediately before upload
+        id: publication
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MODE: ${{ inputs.mode }}
+        run: >-
+          "${{ steps.control.outputs.python-path }}" -X utf8 sdk/scripts/release/sdk_release.py recheck
+          --aggregate original-candidate/candidate/aggregate.json --artifacts original-candidate/candidate
+          --prerequisites original-candidate/original/evidence/core/prerequisites.json --core-root core --output fresh-publication
+          --intent "$MODE"
+          --github-output "$GITHUB_OUTPUT"
+      # Upload only missing measured files after hashing existing official bytes; never skip unknown conflicts.
+      # 核算现有正式字节后仅上传缺少的已测文件；绝不跳过未知冲突。
+      - uses: pypa/gh-action-pypi-publish@6733eb7d741f0b11ec6a39b58540dab7590f9b7d
+        if: steps.publication.outputs.upload_required == 'true'
+        with:
+          packages-dir: fresh-publication/upload/packages
+          verify-metadata: true
+          skip-existing: false
+
+      - name: Resolve the exact core library for the published consumer
+        env:
+          PLATFORM: ${{ steps.bootstrap.outputs.consumer_platform }}
+        run: >-
+          "${{ steps.control.outputs.python-path }}" -X utf8 core/scripts/release/sdk_prerequisites.py sdk-inputs
+          --input fresh-publication/core/prerequisites.json --platform "$PLATFORM" --output resolved-inputs.json
+      - name: Cold official PyPI download, hashed index installation and native acceptance
+        run: >-
+          "${{ steps.control.outputs.python-path }}" -X utf8 sdk/scripts/release/sdk_release.py verify-pypi
+          --aggregate original-candidate/candidate/aggregate.json --inputs resolved-inputs.json --output official-pypi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: official-pypi-proof
+          path: |
+            official-pypi/pypi-proof.json
+            official-pypi/native.log
+          if-no-files-found: error
+      - name: Publish or reuse exactly the original signed main Release bytes
+        env:
+          MODE: ${{ inputs.mode }}
+          GITHUB_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          "${{ steps.control.outputs.python-path }}" -X utf8 sdk/scripts/release/sdk_release.py publish-candidate
+          --candidate original-candidate --core-root core --intent "$MODE" --output main-release-state.json
+      - name: Prepare an independent current completion receipt
+        env:
+          MODE: ${{ inputs.mode }}
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          "${{ steps.control.outputs.python-path }}" -X utf8 sdk/scripts/release/sdk_release.py completion-prepare
+          --candidate original-candidate --core-root core --intent "$MODE" --proof official-pypi/pypi-proof.json
+          --main-release-state main-release-state.json --output completion
+          --publication-proof fresh-publication/publish-proof.json
+          --publication-prerequisites fresh-publication/core/prerequisites.json
+      - name: Attest the new completion without reissuing the original candidate
+        id: provenance
+        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26
+        with:
+          subject-path: completion/completion.json
+      - name: Authenticate and publish the independent completion Release
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ github.token }}
+          MODE: ${{ inputs.mode }}
+        run: >-
+          "${{ steps.control.outputs.python-path }}" -X utf8 sdk/scripts/release/sdk_release.py publish-completion
+          --prepared completion --bundle "${{ steps.provenance.outputs.bundle-path }}" --core-root core
+          --candidate original-candidate --intent "$MODE"

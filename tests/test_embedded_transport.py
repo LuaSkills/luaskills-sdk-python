@@ -9,12 +9,13 @@ import ctypes
 import json
 import sys
 import threading
+import typing
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
 
-from luaskills import EmbeddedRuntimeError, EmbeddedTransport, EmbeddedTransportConfig, EmbeddedTransportError
+from luaskills import EmbeddedCallbackPump, EmbeddedRuntimeError, EmbeddedTransport, EmbeddedTransportConfig, EmbeddedTransportError
 from luaskills.embedded_transport import _NativeConfig, _NativeResult
 from luaskills import embedded_contract as contract
 from luaskills.ffi import FfiBorrowedBuffer
@@ -241,6 +242,30 @@ class EmbeddedTransportTests(unittest.TestCase):
         self.assertEqual(self.native.received[-1]["command"]["value"], "中文\0🦥")
         self.assertEqual(self.native.released, [(1 << 63) + 101])
         self.assertFalse(self.native.allocations)
+
+    def test_callback_pump_query_returns_exact_read_only_owner_and_resolvable_type(self):
+        """
+        Query the existing sole registry by exact runtime identity, preserving ownership and native state.
+        按精确运行时身份查询现有唯一注册表，保留所有权及原生状态。
+        Require the public return annotation to resolve to the concrete pump class without custom globals.
+        要求公开返回注解无需自定义全局参数即可解析为具体事件泵类。
+        """
+        # Claim publication precedes startup, so an unstarted concrete owner can exercise the query offline.
+        # 声明发布先于启动，因此未启动具体所有者可离线验证查询。
+        owner = EmbeddedCallbackPump.__new__(EmbeddedCallbackPump)
+        self.assertIsNone(self.transport.callback_pump("exact-runtime"))
+        self.transport._claim_callback_pump("exact-runtime", owner)
+        try:
+            self.assertIs(self.transport.callback_pump("exact-runtime"), owner)
+            self.assertIsNone(self.transport.callback_pump("other-runtime"))
+            self.assertIs(self.transport.callback_pump("exact-runtime"), owner)
+            self.assertEqual(typing.get_type_hints(EmbeddedTransport.callback_pump), {
+                "runtime_id": str, "return": EmbeddedCallbackPump | None,
+            })
+            self.assertFalse(self.native.received)
+        finally:
+            self.transport._release_callback_pump("exact-runtime", owner)
+        self.assertIsNone(self.transport.callback_pump("exact-runtime"))
 
     def test_parse_failure_always_releases_actual_result(self):
         """

@@ -6,7 +6,7 @@ LuaSkills 主仓库：[LuaSkills/luaskills](https://github.com/LuaSkills/luaskil
 
 Python SDK，用于通过公共 JSON FFI 接入 LuaSkills 运行时。
 
-`0.5.7` 是当前发布版本。它沿用严格的技能包级配置契约，并将运行时资产默认值设为 LuaSkills core `v0.5.7`、vldb-controller `v0.2.3` 与 vldb-sqlite `v0.1.6`。
+本源码面向 `0.6.0` 发布线；发布与资产验证遵循发布工作流。它沿用严格的技能包级配置契约，并将运行时资产默认值设为 LuaSkills core `v0.6.0`、vldb-controller `v0.2.3` 与 vldb-sqlite `v0.1.6`。
 
 SDK 封装了原生动态库加载、JSON FFI buffer、engine 生命周期、正式 skill root、带权限语义的管理调用、skill config、provider callback、宿主工具 callback 与 runtime 资产安装。宿主在常规集成中不需要手写底层 FFI buffer 或 JSON 包络。
 
@@ -39,7 +39,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/deps/sync_runtime_as
 RUNTIME_ROOT=/opt/luaskills scripts/deps/sync_runtime_assets.sh all vldb-controller
 ```
 
-目标支持 `all`、`luaskills`、`lua`、`vldb`；VLDB 模式支持 `none`、`vldb-controller`、`vldb-direct`、`host-callback`。脚本默认固定 LuaSkills `v0.5.7`，并允许显式覆盖发布版本。
+目标支持 `all`、`luaskills`、`lua`、`vldb`；VLDB 模式支持 `none`、`vldb-controller`、`vldb-direct`、`host-callback`。脚本默认固定 LuaSkills `v0.6.0`，并允许显式覆盖发布版本。
 
 `install-runtime` 会下载 GitHub Release 资产、校验 `.sha256` 旁路文件、解压原生文件与 Lua runtime 包，并写入：
 
@@ -114,7 +114,7 @@ python scripts/debug-tools/managed_runtime_layout_check.py D:\VulcanCodeData\lua
 ## 版本对齐
 
 - 尽量让 SDK 与 LuaSkills core 保持同一条当前发布版本线。
-- 当前 SDK 默认指向 LuaSkills core 标签 `v0.5.7`。
+- 本源码默认指向 LuaSkills core 标签 `v0.6.0`。
 - runtime packages 与 native deps 仍然来自拆分后的 `LuaSkills/luaskills-packages` 及相关发布资产。
 - SDK 默认 host options 传入 `runtime_root`、两个空的受管根覆盖槽与完整稳定的 `managed_runtime_config`；宿主未显式覆盖时，LuaSkills 会推导固定数据布局。
 - 宿主工具直接放在 `runtime_root/bin`，不再放到 `runtime_root/bin/tools`。
@@ -399,7 +399,7 @@ finally:
 
 嵌入式请求接受对象键为字符串的内置 JSON 值。在原生提交前拒绝元组、自定义嵌套容器、键强制转换、循环、非有限数、越界整数和不成对 Unicode 代理。响应解码拒绝解码后重复键，保留负零、整数值浮点数、完整整数位和显式空值。畸形响应仍遵守传输的拥有型结果释放协议。此严格编码器作用于新嵌入式接口；旧 JSON FFI 的行为保持原样。
 
-`EmbeddedTransport` 绑定五个传输入口及只读引导入口 `luaskills_ffi_embedded_describe_v1`。此开发接口要求使用导出这些符号的匹配本地核心构建；已有 0.5.7 发布资产不提供该接口。版本提升和已发布资产对齐在发布冻结阶段完成。
+`EmbeddedTransport` 绑定五个传输入口及只读引导入口 `luaskills_ffi_embedded_describe_v1`。此接口要求使用导出这些符号的匹配核心；历史 0.5.7 发布资产不提供该接口。开发时使用匹配本地构建，并通过发布工作流验证已发布资产。
 
 构造函数在分配传输前检查精确生成的核心版本、JSON／ABI 版本、描述版本、契约 SHA-256、必需命令及能力、进程内后端、操作系统和解释器指针位宽。原生加载器负责机器指令兼容。缺少引导符号或元数据不兼容时抛出 `EmbeddedCompatibilityError`；原生引导状态失败保留 `EmbeddedTransportError`。不回退旧核心。元数据按核心拥有的上限复制，全程保留动态库，绝不调用任何结果释放函数。`transport.core_description` 返回独立的生成类型 `OutputCoreDescription` 快照，包含构建输入证据。这些摘要描述选定源码及编译器输入，不认证二进制，也不替代发布产物校验；Rust 消费工作区可能采用不同于报告中包内锁文件的依赖图。
 
@@ -596,24 +596,35 @@ PYTHONPATH=src python -m luaskills.cli version --runtime-root D:/runtime/luaskil
 
 ## 发布
 
-发布版本记录在 `VERSION`。发布前请保持 `VERSION` 与 `pyproject.toml` 一致。
+发布版本以 `pyproject.toml` 的 `project.version` 为权威，`VERSION` 是必须一致的镜像。
 
 如果要做生态统一发布，必须先发布 `LuaSkills/luaskills-packages`，再发布 `LuaSkills/luaskills`，确保本 SDK 默认安装器引用的 runtime 资产已经存在。
 
-发布前执行：
+正式发布使用默认分支上的 **Python SDK release** 工作流。先将 `.github/workflows/sdk-release.yml` 提交至默认分支，再提供与事件及工作流定义相同的完整 `source_sha`，以及独立已发布核心的精确 `core_tag` 和 `core_commit`。SDK 版本唯一来源是 `pyproject.toml` 的 `project.version`，`VERSION` 必须作为镜像一致；核心标签必须与包内默认运行时资产标签匹配。`artifact-only` 仅验收，不发布。
+
+在公共核心前置条件就绪前，使用本地精确产物验收入口：
 
 ```bash
-python -m build
-twine check dist/*
+python scripts/verify_embedded_native_distribution.py --wheel <exact-wheel> --sdist <exact-sdist> --library <frozen-library> --library-sha256 <sha256> --description <actual-description-json>
 ```
 
-每次 PyPI publish 都必须使用新的 patch 版本；已发布版本不能覆盖。
+正式工作流从冻结核心检出调用公共 helper，验证精确 GitHub 核心发布及真实 Cargo registry 消费者。每个新 runner 通过公共 `github-only` 及 `toolchain-inputs` 门禁，从已认证核心发布记录派生精确 Rust/Cargo 工具链。只构建一对 wheel/sdist，强制 `twine check --strict`，在核心声明的全部平台及最低、当前受支持 Python 中独立安装验收相同字节，原生跳过不能通过。上传前再次执行完整公共门禁，Trusted Publishing 仅上传已测字节而不重建；恢复时先核验正式现有 wheel/sdist 实际字节相同，再仅上传缺少文件，未知状态或不同字节均失败。随后冷安装正式 PyPI 包并使用同一核心库回验。每次不同的 PyPI 发布必须使用新版本，已发布文件不能覆盖。
+
+账号所有者必须配置 `production` environment，并将 PyPI `luaskills-sdk` 的 Trusted Publisher 绑定至 `LuaSkills/luaskills-sdk-python`、`sdk-release.yml` 及 `production`。本地测试尚未验证账号绑定及生产配置；工作流不使用 PAT 或账号登录。参见 [PyPI Trusted Publisher 配置](https://docs.pypi.org/trusted-publishers/adding-a-publisher/)。
+
+独立 `candidate-evidence` 作业在修改 registry 或公共 Release 前，将包、实际原生报告及日志、核心凭据冻结为已签名清单。artifact 名称由冻结核心 `sdk_recovery.py` 唯一权威产生，实际上传 ID 单独记录。主 `v{SDK_VERSION}` Release 仅保存该原始已签名文件集合。原轮次可在后续发布阶段失败，但所有必需候选门禁仍须实际成功；其原状态及 `artifact-only` 模式保持不变。
+
+恢复时，从相同固定 SDK SHA 调度 `mode=recover`，明确提供 `candidate_run_id`、`candidate_run_attempt` 及 `candidate_artifact_id`。原凭据缺失、过期或变化时在上传前失败，不重建替代候选、不选择最新轮次。仅产物候选证明已测字节，不授权发布；只有当前明确的受保护 publish/recover 操作才可重新执行核心门禁、精确 PyPI 复用或部分上传、冷消费。主 Release 仅复用相同原字节，不替换或追加。新完成凭据绑定原清单、bundle、上传 ID、精确主 Release 和新消费者，发布到独立 `recovery-v{SDK_VERSION}-r{COMPLETION_RUN_ID}-a{COMPLETION_ATTEMPT}` Release。每个 Release 均先在草稿中上传全部资产，再正式发布。
+
+`formal-proof` 除原 `--source-sha`、SDK 与核心身份、平台外，还必须明确提供 `--candidate-run-id`、`--candidate-run-attempt`、`--completion-run-id`、`--completion-run-attempt` 及 `--completion-source-sha`。它验证两份官方签名和精确轮次 API；指定完成轮次必须整体成功。初版要求完成源码与原 SDK 源码相等。Schema 2 `accepted.json` 保留两组身份，并在新完整核心 registry 门禁及冷 PyPI 原生消费后，绑定 `fresh-formal-consumer.json` 的实际摘要；没有含混 `--run-id` 别名。本地夹具只证明门禁逻辑，不能证明真实 OIDC 发布或全部托管平台通过。发布夹具仅从明确 `SDK_RELEASE_TEST_CORE_ROOT` 检出加载共享权威；设置该环境变量后执行 `python -X utf8 tests/test_sdk_release.py`。
 
 推荐统一发布顺序：`luaskills-packages` -> `luaskills` 核心仓库 -> TypeScript SDK -> Python SDK -> Go SDK -> 各 SDK 的 examples release。
 
-PyPI 发布成功后，手动运行 GitHub Actions 里的 **Examples Release** 工作流。它会读取 `VERSION`，从 PyPI 安装 `luaskills-sdk=={VERSION}`，安装 LuaSkills runtime 资产，运行示例冒烟测试，然后创建或更新 `examples-v{VERSION}` GitHub Release，并上传：
+Python 必须先通过核心 GitHub 发布及真实 Cargo 消费前置条件；TypeScript 发布独立，并非 Python 门禁依赖。Go 安装器验收消费实际 TypeScript 和 Python 发布，各 SDK 保留独立版本及源码 SHA。
+
+明确 SDK 完成轮次成功后，从相同默认分支固定 SDK SHA 手动调度 **Examples Release**，提供候选及完成双方 run ID、attempt、独立完成源码 SHA、精确 SDK 版本、核心标签及 SHA 和匹配核心平台。它认证两条持久签名链，冷安装带摘要的正式 PyPI 包，并使用记录的精确核心库执行嵌入示例；仅归档已跟踪示例，不包含安装环境及生成运行时文件。固定时间、排序且不压缩的 ZIP 成员及稳定包证明使 ZIP、摘要文件可跨重试复现；工作流还在公共修改前将精确文件上传为 artifact。独立 `examples-v{SDK_VERSION}` Release 先以草稿上传全部资产，再正式发布：
 
 - `luaskills-sdk-python-examples-{VERSION}.zip`
 - `luaskills-sdk-python-examples-{VERSION}.zip.sha256`
 
-示例 release tag 故意使用 `examples-v` 前缀，因为它是示例资产发布，不是 SDK 包版本。
+`examples-v` 前缀保留现有示例下载协议，并使示例资产与正式 SDK Release 分离。现有相同字节可复用，不同字节直接拒绝，不使用 `--clobber`。

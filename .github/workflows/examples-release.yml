@@ -2,159 +2,121 @@ name: Examples Release
 
 on:
   workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact default-branch SDK source and workflow SHA
+        required: true
+      sdk_version:
+        description: Exact independently published Python SDK version
+        required: true
+      core_tag:
+        description: Exact independent published core tag
+        required: true
+      core_commit:
+        description: Exact core commit
+        required: true
+      candidate_run_id:
+        description: Explicit original signed SDK candidate run ID
+        required: true
+      candidate_run_attempt:
+        description: Explicit original signed SDK candidate attempt
+        required: true
+      completion_run_id:
+        description: Explicit successful independent SDK completion run ID
+        required: true
+      completion_run_attempt:
+        description: Explicit successful independent SDK completion attempt
+        required: true
+      completion_source_sha:
+        description: Exact completion workflow source SHA, equal to source_sha in this version
+        required: true
+      platform:
+        description: Exact core candidate platform matching ubuntu-24.04
+        required: true
 
 permissions:
   contents: write
 
+concurrency:
+  group: python-sdk-release
+  cancel-in-progress: false
+
 jobs:
   examples-release:
-    name: Build and publish examples release
-    runs-on: ubuntu-latest
-
+    runs-on: ubuntu-24.04
+    environment: production
     steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Setup Python
-        uses: actions/setup-python@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          python-version: "3.12"
-
-      - name: Resolve release version
-        id: version
-        shell: bash
-        run: |
-          set -euo pipefail
-          version="$(tr -d '[:space:]' < VERSION)"
-          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]]; then
-            echo "Invalid VERSION value: $version" >&2
-            exit 1
-          fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "release_tag=examples-v$version" >> "$GITHUB_OUTPUT"
-          echo "package_name=luaskills-sdk-python-examples-$version" >> "$GITHUB_OUTPUT"
-          echo "asset_name=luaskills-sdk-python-examples-$version.zip" >> "$GITHUB_OUTPUT"
-
-      - name: Create standalone examples package
-        shell: bash
+          ref: ${{ inputs.source_sha }}
+          path: sdk
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: LuaSkills/luaskills
+          ref: ${{ inputs.core_commit }}
+          path: core
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        id: control
+        with:
+          python-version: '3.14'
+      - run: '"${{ steps.control.outputs.python-path }}" -m pip install $("${{ steps.control.outputs.python-path }}" sdk/scripts/release/sdk_release.py tool-requirements)'
+      - name: Resolve actual published core toolchain for the fresh consumer
+        id: bootstrap
         env:
-          VERSION: ${{ steps.version.outputs.version }}
-          PACKAGE_NAME: ${{ steps.version.outputs.package_name }}
-        run: |
-          set -euo pipefail
-          package_root="target/examples-release/$PACKAGE_NAME"
-          mkdir -p "$package_root"
-          cp LICENSE README.md README_cn.md "$package_root/"
-          cp -R examples "$package_root/examples"
-          cat > "$package_root/requirements.txt" <<REQUIREMENTS
-          luaskills-sdk==$VERSION
-          REQUIREMENTS
-          cat > "$package_root/EXAMPLES_RELEASE.md" <<MARKDOWN
-          # LuaSkills Python SDK Examples $VERSION
-
-          English documentation is the default documentation. For Chinese, see README_cn.md and examples/README_cn.md.
-
-          These examples install and use the published PyPI package:
-
-          \`\`\`bash
-          python -m venv .venv
-          . .venv/bin/activate
-          python -m pip install -r requirements.txt
-          luaskills install-runtime --database none --runtime-root examples/fixture_runtime
-          python examples/basic.py
-          python examples/query.py
-          python examples/runtime_lease.py
-          \`\`\`
-
-          Main repository: https://github.com/LuaSkills/luaskills
-          MARKDOWN
-
-      - name: Install published SDK and runtime assets
-        shell: bash
-        working-directory: target/examples-release/${{ steps.version.outputs.package_name }}
-        run: |
-          set -euo pipefail
-          python -m venv .venv
-          . .venv/bin/activate
-          python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt
-          luaskills install-runtime --database none --runtime-root examples/fixture_runtime
-
-      - name: Run published-package smoke examples
-        shell: bash
-        working-directory: target/examples-release/${{ steps.version.outputs.package_name }}
-        env:
-          LUASKILLS_RUNTIME_ROOT: ${{ github.workspace }}/target/examples-release/${{ steps.version.outputs.package_name }}/examples/fixture_runtime
-          LUASKILLS_EXAMPLE_RUNTIME_ROOT: ${{ github.workspace }}/target/examples-release/${{ steps.version.outputs.package_name }}/examples/fixture_runtime
-        run: |
-          set -euo pipefail
-          . .venv/bin/activate
-          python -m compileall examples
-          python examples/basic.py
-          python examples/query.py
-          python examples/call.py
-          python examples/lifecycle.py
-          python examples/runtime_lease.py
-          python examples/provider_callback.py
-
-      - name: Package examples asset
-        shell: bash
-        env:
-          PACKAGE_NAME: ${{ steps.version.outputs.package_name }}
-          ASSET_NAME: ${{ steps.version.outputs.asset_name }}
-        run: |
-          set -euo pipefail
-          mkdir -p target/release-assets
-          (
-            cd target/examples-release
-            zip -qr "../release-assets/$ASSET_NAME" "$PACKAGE_NAME"
-          )
-          (
-            cd target/release-assets
-            sha256sum "$ASSET_NAME" > "$ASSET_NAME.sha256"
-          )
-
-      - name: Write release notes
-        shell: bash
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          set -euo pipefail
-          cat > target/release-assets/RELEASE_NOTES.md <<MARKDOWN
-          ## LuaSkills Python SDK Examples $VERSION
-
-          This release contains a standalone examples package for the published PyPI package \`luaskills-sdk==$VERSION\`.
-
-          The package was smoke-tested by installing the published SDK, installing LuaSkills runtime assets, and running the bundled examples, including the persistent runtime-session flow.
-
-          Main repository: https://github.com/LuaSkills/luaskills
-
-          ## 中文说明
-
-          本 Release 包含面向已发布 PyPI 包 \`luaskills-sdk==$VERSION\` 的独立示例包。
-
-          工作流已通过安装正式 SDK、安装 LuaSkills runtime 资产并运行内置示例完成冒烟验证，其中包含持久 runtime-session 流程。
-          MARKDOWN
-
-      - name: Publish GitHub Release
-        shell: bash
-        env:
+          CORE_TAG: ${{ inputs.core_tag }}
+          CORE_COMMIT: ${{ inputs.core_commit }}
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ steps.version.outputs.release_tag }}
-          VERSION: ${{ steps.version.outputs.version }}
-          ASSET_NAME: ${{ steps.version.outputs.asset_name }}
-        run: |
-          set -euo pipefail
-          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" \
-              "target/release-assets/$ASSET_NAME" \
-              "target/release-assets/$ASSET_NAME.sha256" \
-              --clobber
-          else
-            gh release create "$RELEASE_TAG" \
-              "target/release-assets/$ASSET_NAME" \
-              "target/release-assets/$ASSET_NAME.sha256" \
-              --target "$GITHUB_SHA" \
-              --title "LuaSkills Python SDK Examples $VERSION" \
-              --notes-file target/release-assets/RELEASE_NOTES.md
-          fi
+        run: >-
+          "${{ steps.control.outputs.python-path }}" -X utf8 sdk/scripts/release/sdk_release.py bootstrap
+          --core-tag "$CORE_TAG" --core-commit "$CORE_COMMIT" --core-root core
+          --output "${{ runner.temp }}/bootstrap" --github-output "$GITHUB_OUTPUT"
+      # Only the common authority selects the version; its complete recheck validates the installed identity.
+      # 仅公共权威选择版本；其完整重查验证安装后的身份。
+      - name: Install the exact published core toolchain
+        env:
+          TOOLCHAIN: ${{ steps.bootstrap.outputs.toolchain }}
+        run: rustup toolchain install "$TOOLCHAIN" --profile minimal
+      # Fresh consumption authenticates successful issuer and public bytes before packaging.
+      # 打包前，新消费认证成功签发任务及公共字节。
+      - name: Authenticate formal publication and cold-install exact PyPI package
+        env:
+          SDK_SOURCE_SHA: ${{ inputs.source_sha }}
+          SDK_VERSION: ${{ inputs.sdk_version }}
+          CORE_TAG: ${{ inputs.core_tag }}
+          CORE_COMMIT: ${{ inputs.core_commit }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          CANDIDATE_RUN_ATTEMPT: ${{ inputs.candidate_run_attempt }}
+          COMPLETION_RUN_ID: ${{ inputs.completion_run_id }}
+          COMPLETION_RUN_ATTEMPT: ${{ inputs.completion_run_attempt }}
+          COMPLETION_SOURCE_SHA: ${{ inputs.completion_source_sha }}
+          PLATFORM: ${{ inputs.platform }}
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          "${{ steps.control.outputs.python-path }}" -X utf8 sdk/scripts/release/sdk_release.py formal-proof
+          --source-sha "$SDK_SOURCE_SHA" --sdk-version "$SDK_VERSION" --core-tag "$CORE_TAG"
+          --core-commit "$CORE_COMMIT" --candidate-run-id "$CANDIDATE_RUN_ID" --candidate-run-attempt "$CANDIDATE_RUN_ATTEMPT"
+          --completion-run-id "$COMPLETION_RUN_ID" --completion-run-attempt "$COMPLETION_RUN_ATTEMPT"
+          --completion-source-sha "$COMPLETION_SOURCE_SHA" --platform "$PLATFORM"
+          --core-root core --output formal-publication
+      - name: Execute and package tracked examples with official installed SDK
+        run: >-
+          "${{ steps.control.outputs.python-path }}" -X utf8 sdk/scripts/release/sdk_release.py examples
+          --formal-proof formal-publication --root sdk --output examples-assets
+      # Preserve original deterministic ZIP/sidecar before public release mutation; retries must reproduce identical bytes.
+      # 在公共发行修改前保留原确定性 ZIP 及摘要文件；重试必须复现相同字节。
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: examples-bytes-r${{ github.run_id }}-a${{ github.run_attempt }}
+          path: examples-assets/*
+          if-no-files-found: error
+      # Equal existing bytes are reused; a different digest fails without overwriting.
+      # 复用相同现有字节；摘要不同则失败而不覆盖。
+      - name: Publish independent examples assets through a complete draft
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          "${{ steps.control.outputs.python-path }}" -X utf8 sdk/scripts/release/sdk_release.py publish-examples
+          --formal-proof formal-publication --assets examples-assets --core-root core

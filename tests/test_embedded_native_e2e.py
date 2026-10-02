@@ -237,6 +237,35 @@ class EmbeddedNativeIntegrationTests(EmbeddedNativeFixture, unittest.TestCase):
             self.assertNotEqual(operation_id, closing_id)
             self.assertEqual(self.command({"type":"operation_status", "operation_id":operation_id}), previous)
 
+    def test_application_integer_policy_before_admission(self):
+        """
+        Reject nested unsafe integers before source initialization; echo safe endpoints and finite floats.
+        在源码初始化前拒绝嵌套不安全整数；回传安全端点及有限浮点数。
+        Return nothing after exact native operation observations and normal fixture cleanup.
+        精确观察原生操作并正常清理夹具后无返回值。
+        """
+        # Initialization is an observable tripwire if any rejected request creates a VM.
+        # 若被拒绝请求创建 VM，初始化会成为可观察的触发器。
+        rejecting_pool = self.pool("error('invalid arguments reached initialization')")
+        for value in (2**53, -(2**53), {"nested": [2**64 - 1]}):
+            with self.assertRaises(EmbeddedRuntimeError) as failure:
+                self.submit(rejecting_pool, value)
+            self.assertEqual(failure.exception.code, "invalid_argument")
+        self.assertEqual(self.command({"type": "operation_list", "pool_id": rejecting_pool,
+            "after_operation_id": None, "limit": 16})["operation_ids"], [])
+        # Python float supplies an explicit JSON Float even at the rejected integer's magnitude.
+        # Python float 即使处于被拒绝整数的量级也提供显式 JSON Float。
+        echo_pool = self.pool("return {call=function(a) return a end}")
+        for value in (2**53 - 1, -(2**53 - 1), float(2**53), 1e100):
+            # Forget exact admitted operations after checking their real terminal snapshots.
+            # 检查真实终态快照后遗忘精确已入场操作。
+            operation_id = self.submit(echo_pool, value)
+            result = self.terminal(operation_id)
+            self.assertEqual(result["phase"], "succeeded", result)
+            self.assertEqual(result["value"], value)
+            self.assertIs(type(result["value"]), type(value))
+            self.command({"type": "operation_forget", "operation_id": operation_id})
+
     def test_actual_lua_state_json_types_and_native_lifecycle(self):
         """
         Preserve Lua state and structured values through ctypes, then release each retained operation.

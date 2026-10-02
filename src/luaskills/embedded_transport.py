@@ -214,7 +214,7 @@ class EmbeddedTransport:
         self._results: dict[int, _NativeResult] = {}
         # Exact callback pump owners prevent duplicate consumption and transport release between polling calls.
         # 精确回调泵所有者阻止重复消费及轮询调用间隙中的传输释放。
-        self._callback_pumps: dict[str, object] = {}
+        self._callback_pumps: dict[str, embedded_pump.EmbeddedCallbackPump] = {}
         # One lifecycle coordinator per adopted runtime keeps drainage independent of command receipt quotas.
         # 每个接管运行时拥有一个生命周期协调器，使排空独立于命令回执配额。
         self._runtime_scopes: dict[str, object] = {}
@@ -457,7 +457,21 @@ class EmbeddedTransport:
             self._check("luaskills_ffi_embedded_transport_free_v1", self._free(self._transport_id))
             self._transport_id = None
 
-    def _claim_callback_pump(self, runtime_id: str, owner: object) -> None:
+    def callback_pump(self, runtime_id: str) -> embedded_pump.EmbeddedCallbackPump | None:
+        """
+        Return the actual retained callback pump for this transport's exact runtime_id, or None if no owner exists.
+        返回此传输精确 runtime_id 的实际保留回调泵；不存在所有者时返回 None。
+        This read-only snapshot uses the sole ownership registry under its lock; it never creates or releases owners.
+        此只读快照在所有权锁内使用唯一注册表；绝不创建或释放所有者。
+        The returned strong reference can close and join a pump whose constructor was interrupted after thread start.
+        返回的强引用可关闭并汇合在线程启动后构造器被中断的回调泵。
+        None proves only absence of a retained SDK pump, not native runtime readiness, closure or delivery success.
+        None 仅证明不存在保留 SDK 泵，不证明原生运行时就绪、关闭或交付成功。
+        """
+        with self._lock:
+            return self._callback_pumps.get(runtime_id)
+
+    def _claim_callback_pump(self, runtime_id: str, owner: embedded_pump.EmbeddedCallbackPump) -> None:
         """
         Retain one exact pump owner for a runtime before its thread starts; this is SDK ownership, not native registration.
         在线程启动前为运行时保留一个精确泵所有者；这是 SDK 所有权，而非原生注册。
@@ -568,3 +582,8 @@ class EmbeddedTransport:
         with self._lock:
             if runtime_id in self._runtime_scopes:
                 raise RuntimeError("close the owning embedded runtime scope before independent release")
+
+
+# Bind the concrete pump module only after its required transport declarations exist; keep runtime type hints resolvable.
+# 仅在事件泵所需传输声明存在后绑定具体泵模块；保持运行时类型提示可解析。
+from . import embedded_pump

@@ -135,6 +135,50 @@ class EmbeddedPumpIntegrationTests(EmbeddedNativeFixture, unittest.TestCase):
             self.assertLess(time.monotonic(), deadline, self.pump.status)
             time.sleep(0.001)
 
+    def test_unsafe_integer_completion_keeps_committed_ledger(self):
+        """
+        Complete an unsafe integer callback once, preserve committed effects and prove subsequent reuse.
+        单次完成不安全整数回调、保留已提交副作用并证明后续复用。
+        Return nothing after pump closure proves no pending callback ownership.
+        泵关闭证明没有待处理回调所有权后无返回值。
+        """
+        # Exact request identities bind assertions to the original ledger rather than array positions.
+        # 精确请求身份将断言绑定到原账本，而非数组位置。
+        requests = []
+
+        def handler(value, context):
+            """
+            Record context's request, report actual commit and return a wide integer only for unsafe value.
+            记录 context 的请求、报告实际提交，仅对 unsafe value 返回宽整数。
+            """
+            requests.append(context.request_id)
+            context.report_effects("committed")
+            return 2**64 - 1 if value == "unsafe" else value
+
+        self.pump.register([self.capability(handler)], timeout=5)
+        # One reusable Lua module returns the full capability envelope without asserting success.
+        # 同一个可复用 Lua 模块返回完整能力信封，不断言能力成功。
+        pool_id = self.callback_pool()
+        rejected = self.terminal(self.submit(pool_id, "unsafe"))
+        self.assertEqual(rejected["phase"], "succeeded", rejected)
+        # A single committed callback does not determine the effects of the complete Lua execution.
+        # 单次已提交回调不能确定完整 Lua 执行的副作用。
+        self.assertEqual(rejected["effects"], "unknown")
+        self.assertFalse(rejected["value"]["ok"])
+        self.assertEqual(rejected["value"]["error"]["code"], "invalid_argument")
+        self.assertEqual(rejected["value"]["effects"], "committed")
+        # Find the exact original callback's retained completion evidence.
+        # 查找精确原回调保留的完成证据。
+        effect = next(entry for entry in rejected["host_effects"] if entry["request_id"] == requests[0])
+        self.assertEqual(effect["phase"], "completed")
+        self.assertEqual(effect["effects"], "committed")
+        self.assertEqual(self.terminal(self.submit(pool_id, "normal"))["value"]["value"], "normal")
+        self.pump.close(5)
+        self.assertEqual(len(requests), 2)
+        self.assertIsNone(self.pump.status["failure"])
+        self.assertEqual(self.pump.status["request_ids"], ())
+        self.assertEqual(self.pump.status["pending_acknowledgements"], ())
+
     def test_sync_callback_receives_trusted_identity_and_preserves_null(self):
         """
         Invoke a synchronous handler off the pump loop and preserve explicit host commit and successful null.

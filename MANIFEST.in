@@ -8,3 +8,4 @@ recursive-include scripts *.py *.ps1 *.sh
 include tests/test_embedded_json_vectors.py
 include tests/test_embedded_compatibility.py
 include tests/test_embedded_transport.py
+include tests/test_embedded_example_native_startup.py

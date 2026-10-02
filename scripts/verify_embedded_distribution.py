@@ -29,6 +29,7 @@ PACKAGE_ARTIFACTS = (
     "luaskills/embedded_pump_delivery.py",
     "luaskills/embedded_callbacks.py",
     "luaskills/embedded_contract.py",
+    "luaskills/examples/embedded_runtime.py",
     "luaskills/contracts/embedded/v1/contract.json",
     "luaskills/contracts/embedded/v1/contract.sha256",
     "luaskills/contracts/embedded/v1/README.md",
@@ -65,12 +66,14 @@ from luaskills import embedded_contract as contract
 from luaskills import embedded_client as client
 from luaskills import embedded_scope as scope
 from luaskills import embedded_compatibility as compatibility
+from luaskills import embedded_transport as transport
 import luaskills
 assert contract.__file__.startswith(sys.argv[1])
 assert client.__file__.startswith(sys.argv[1])
 assert scope.__file__.startswith(sys.argv[1])
 assert compatibility.__file__.startswith(sys.argv[1])
 assert luaskills.EmbeddedCompatibilityError is compatibility.EmbeddedCompatibilityError
+assert typing.get_type_hints(transport.EmbeddedTransport.callback_pump)["return"] == luaskills.EmbeddedCallbackPump | None
 # Resolve imported recursive aliases in their defining contract namespace, as required by typing on Python 3.10.
 # 按 Python 3.10 typing 的要求，在定义契约命名空间解析导入的递归别名。
 for declaration in (client.EmbeddedClient, client.EmbeddedPending, client.EmbeddedRuntime, client.EmbeddedPlugin, client.EmbeddedCapacity,
@@ -126,7 +129,7 @@ def verify_sdist(path: Path) -> None:
         prefix = next(iter(roots)) + "/"
         # Only these verified files are materialized; tar names never become destination filesystem paths.
         # 只落盘这些经验证文件；tar 名称绝不成为目标文件系统路径。
-        artifacts = ["scripts/generate_embedded_contract.py", "scripts/verify_embedded_distribution.py", "tests/test_embedded_json_vectors.py", "tests/test_embedded_compatibility.py", "tests/test_embedded_transport.py", *("src/" + name for name in PACKAGE_ARTIFACTS)]
+        artifacts = ["scripts/generate_embedded_contract.py", "scripts/verify_embedded_distribution.py", "scripts/verify_embedded_native_distribution.py", "examples/embedded_runtime.py", "tests/test_embedded_json_vectors.py", "tests/test_embedded_compatibility.py", "tests/test_embedded_transport.py", "tests/test_embedded_example_native_startup.py", *("src/" + name for name in PACKAGE_ARTIFACTS)]
         destination = Path(temporary)
         for name in artifacts:
             member = archive.getmember(prefix + name)
