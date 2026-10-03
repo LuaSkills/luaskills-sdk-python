@@ -125,12 +125,29 @@ def run(command, cwd=None, env=None):
     在 cwd 中以 env 直接执行 command；仅真实零退出后返回 stdout。
     """
     try:
-        return subprocess.run(command, cwd=cwd, env=env, check=True, text=True,
-                              encoding="utf-8", stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                              timeout=1800).stdout
+        # Collect bytes before interpreting text, including Windows timeout output.
+        # 解释文本前先收集字节，包括 Windows 超时输出。
+        return subprocess.run(command, cwd=cwd, env=env, check=True,
+                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                              timeout=1800).stdout.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
+    # Preserve the real merged partial bytes; None means no output was observed.
+    # 保留真实合并部分字节；None 表示未观察到输出。
+    except subprocess.TimeoutExpired as error:
+        if error.output is not None:
+            try:
+                sys.stderr.buffer.write(error.output)
+                sys.stderr.buffer.flush()
+            # A failed diagnostic pipe is secondary; retain only safe type/errno on the original timeout.
+            # 失败诊断管道属于次要问题；仅在原超时附加安全类型／errno。
+            except OSError as display_error:
+                error.add_note(f"Partial stream display failed: {type(display_error).__name__} errno={display_error.errno}")
+        raise
     except subprocess.CalledProcessError as error:
         # Preserve the actual failed tool diagnostics in Actions output before propagating failure.
         # 传播失败前，在 Actions 输出保留实际失败工具诊断。
+        # Retain the existing failed-tool text attribute and diagnostic for valid UTF-8.
+        # 对有效 UTF-8 保留既有失败工具文本属性及诊断。
+        error.stdout = error.stdout.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
         print(error.stdout)
         raise
 

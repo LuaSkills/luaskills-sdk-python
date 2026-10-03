@@ -29,6 +29,132 @@ release = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(release)
 
 
+
+class TimeoutDiagnosticsTests(unittest.TestCase):
+    """Verify binary partial output and silent timeouts with real subprocess exceptions.
+    使用真实子进程异常核验二进制部分输出及无输出超时。
+    """
+
+    def test_real_timeout_preserves_binary_partial_output_and_none(self):
+        """Require original timeout identity, exact partial bytes and None handling; return nothing.
+        要求原超时身份、精确部分字节及 None 处理；无返回值。
+        """
+        # Retain the true subprocess function; the wrapper changes only its timeout budget.
+        # 保留真实子进程函数；包装器仅改变超时预算。
+        original_run = release.subprocess.run
+        # Exercise both observed binary output and the actual no-output exception state.
+        # 覆盖已观察二进制输出及真实无输出异常状态。
+        for silent in (False, True):
+            with self.subTest(silent=silent), tempfile.TemporaryDirectory() as directory:
+                # Own a fresh destination, expected stream bytes and an exception identity trace.
+                # 拥有新目的地、期望输出字节及异常身份轨迹。
+                root = Path(directory)
+                prefix = root / "partial"
+                expected_stdout, expected_stderr = (b"", b"") if silent else (b"", b"OUT\xff\nERR\xfe\n")
+                observed = []
+                # Capture real terminal bytes without decoding non-UTF8 child output.
+                # 捕获真实终端字节，不解码子进程非 UTF-8 输出。
+                stdout = io.BytesIO()
+                stderr = io.BytesIO()
+                # Use an actual sleeping child; never construct an exception or process result.
+                # 使用真实休眠子进程；绝不构造异常或进程结果。
+                program = "import time; time.sleep(30)" if silent else "import os,time; os.write(1,b'OUT\\xff\\n'); os.write(2,b'ERR\\xfe\\n'); time.sleep(30)"
+                command = [release.sys.executable, "-I", "-B", "-c", program]
+
+                def shorter_timeout(*arguments, **options):
+                    """Execute real arguments after shortening options' timeout; propagate its same exception.
+                    缩短 options 超时后真实执行 arguments；传播同一异常。
+                    """
+                    options["timeout"] = 1
+                    try:
+                        return original_run(*arguments, **options)
+                    except release.subprocess.TimeoutExpired as error:
+                        observed.append(error)
+                        raise
+
+                with patch.object(release.subprocess, "run", side_effect=shorter_timeout), \
+                        patch.object(release.sys, "stdout", SimpleNamespace(buffer=stdout)), \
+                        patch.object(release.sys, "stderr", SimpleNamespace(buffer=stderr)):
+                    # Capture the exact exception rethrown by the production boundary.
+                    # 捕获生产边界重抛的精确异常。
+                    with self.assertRaises(release.subprocess.TimeoutExpired) as caught:
+                        release.run(command, cwd=root)
+                self.assertEqual(len(observed), 1)
+                self.assertIs(caught.exception, observed[0])
+                self.assertEqual(caught.exception.timeout, 1)
+                if silent:
+                    self.assertIn(caught.exception.output, (None, b""))
+                    self.assertIn(caught.exception.stderr, (None, b""))
+                else:
+                    self.assertIsInstance(caught.exception.output, bytes)
+                self.assertEqual(stdout.getvalue(), expected_stdout)
+                self.assertEqual(stderr.getvalue(), expected_stderr)
+
+
+    def test_real_timeout_closed_stderr_preserves_original_exception(self):
+        """Require a real closed-pipe display failure to retain the same timeout and exact merged bytes; return nothing.
+        要求真实关闭管道展示失败保留同一超时及精确合并字节；无返回值。
+        """
+        # Keep the real subprocess executor; only shorten the timeout budget for this sleeping child.
+        # 保留真实子进程执行器；仅缩短此休眠子进程的超时预算。
+        original_run = release.subprocess.run
+        observed = []
+        attempted = []
+        io_errors = []
+        # An actual OS pipe with its read end closed produces the diagnostic write error.
+        # 真实操作系统管道关闭读端后产生诊断写入错误。
+        read_descriptor, write_descriptor = os.pipe()
+        os.close(read_descriptor)
+        stream = os.fdopen(write_descriptor, "wb", buffering=0)
+
+        def stderr_write(content):
+            """Write actual content through the closed-read pipe; record/rethrow its real OSError or return write count.
+            通过关闭读端管道写入实际 content；记录／重抛真实 OSError 或返回写入数。
+            """
+            attempted.append(content)
+            try:
+                return stream.write(content)
+            except OSError as error:
+                io_errors.append(error)
+                raise
+
+        def shorter_timeout(*arguments, **options):
+            """Execute real arguments/options with a one-second timeout; observe/rethrow the same actual exception.
+            以一秒超时执行真实 arguments／options；观察／重抛同一实际异常。
+            """
+            options["timeout"] = 1
+            try:
+                return original_run(*arguments, **options)
+            except release.subprocess.TimeoutExpired as error:
+                observed.append(error)
+                raise
+
+        # Actual child stdout and stderr are merged by the unchanged Python release contract.
+        # 实际子进程 stdout 和 stderr 由未变 Python 发布契约合并。
+        program = "import os,time; os.write(1,b'OUT\\xff\\n'); os.write(2,b'ERR\\xfe\\n'); time.sleep(30)"
+        command = [release.sys.executable, "-I", "-B", "-c", program]
+        try:
+            with tempfile.TemporaryDirectory() as directory, \
+                    patch.object(release.subprocess, "run", side_effect=shorter_timeout), \
+                    patch.object(release.sys, "stderr", SimpleNamespace(buffer=SimpleNamespace(write=stderr_write, flush=stream.flush))):
+                # Only the original timeout may escape; the actual pipe failure is a secondary note.
+                # 仅允许原超时逸出；实际管道失败属于次要注记。
+                with self.assertRaises(release.subprocess.TimeoutExpired) as caught:
+                    release.run(command, cwd=Path(directory))
+        finally:
+            stream.close()
+        self.assertEqual(len(observed), 1)
+        self.assertIs(caught.exception, observed[0])
+        self.assertEqual(caught.exception.output, b"OUT\xff\nERR\xfe\n")
+        self.assertIsNone(caught.exception.stderr)
+        self.assertEqual(attempted, [caught.exception.output])
+        self.assertEqual(len(io_errors), 1)
+        # The note is derived from the real I/O exception, never a synthetic errno or path-bearing diagnostic.
+        # 注记派生自真实 I/O 异常，绝不使用合成 errno 或包含路径的诊断。
+        expected_note = f"Partial stream display failed: {type(io_errors[0]).__name__} errno={io_errors[0].errno}"
+        self.assertEqual(caught.exception.__notes__, [expected_note])
+
+
 class ReleaseGateTests(unittest.TestCase):
     """Build real SDK wheel/sdist once and verify negative publication paths with controlled fixtures.
     一次构建真实 SDK wheel/sdist，并以受控夹具验证负向发布路径。
