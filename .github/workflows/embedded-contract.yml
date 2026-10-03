@@ -17,6 +17,10 @@ jobs:
         python: ['3.10', '3.14']
     runs-on: ${{ matrix.os }}
     steps:
+      # Preserve Git blob bytes so checkout cannot change authenticated source digests.
+      # 保留 Git blob 原字节，避免检出改变已认证的源摘要。
+      - name: Preserve exact tracked source bytes
+        run: git config --global core.autocrlf false
       # Pin verified v7 identities so an action tag cannot change this verification pipeline.
       # 固定已核实的 v7 身份，使 action 标签无法改变此验证流程。
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1

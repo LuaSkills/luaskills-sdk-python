@@ -46,6 +46,10 @@ jobs:
     runs-on: ubuntu-24.04
     environment: production
     steps:
+      # Preserve Git blob bytes so checkout cannot change authenticated source digests.
+      # 保留 Git blob 原字节，避免检出改变已认证的源摘要。
+      - name: Preserve exact tracked source bytes
+        run: git config --global core.autocrlf false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ inputs.source_sha }}
