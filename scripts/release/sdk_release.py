@@ -624,7 +624,9 @@ def verify_pypi(args):
     native_accept(plan, artifacts, args.output, inputs, args.output / "native.log")
     # A separate cold index installation proves ordinary exact-version PyPI resolution with hashes.
     # 另一次冷索引安装以摘要证明普通精确版本 PyPI 解析。
-    environment = args.output / "index-consumer"
+    # Resolve before venv creation so changing child cwd cannot rebase the executable path.
+    # 创建 venv 前规范化，避免切换子进程 cwd 时再次解析解释器路径。
+    environment = (args.output / "index-consumer").resolve()
     venv.EnvBuilder(with_pip=True, system_site_packages=False).create(environment)
     python = environment / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
     requirements = args.output / "requirements.txt"

@@ -247,6 +247,104 @@ class ReleaseGateTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "replacement is forbidden"):
             release.immutable_assets({"one": "a"}, {"one": "b"})
 
+    def exercise_index_consumer_path(self, relative_output):
+        """Execute production verify_pypi with a real venv and interpreter; return both observed calls.
+        使用真实 venv 与解释器执行生产 verify_pypi；返回两个被观察调用。
+        relative_output selects a relative output or its absolute control; only external/business payloads are isolated.
+        relative_output 选择相对输出或其绝对对照；仅隔离外部与业务载荷。
+        """
+        with tempfile.TemporaryDirectory(prefix="luaskills-index-path-") as temporary:
+            # Root and initial_directory isolate the real venv and restore the caller's process directory.
+            # Root 与 initial_directory 隔离真实 venv，并恢复调用方进程目录。
+            root = Path(temporary).resolve()
+            initial_directory = Path.cwd()
+            # Aggregate and inputs retain production's accepted package/core identity checks without a native fixture.
+            # Aggregate 与 inputs 保留生产已接受包／核心身份检查，不使用原生夹具。
+            aggregate = root / "aggregate.json"
+            inputs = root / "inputs.json"
+            release.write_json(aggregate, {"accepted": True, "plan": self.plan, "artifacts": self.artifacts})
+            release.write_json(inputs, {"platform": self.plan["platforms"][0], "source_commit": self.plan["core_commit"],
+                "core_version": self.plan["core_version"], "library": "controlled-native-library",
+                "library_sha256": "0" * 64, "description": "controlled-native-description"})
+            # Response and bodies use the real already-built package bytes behind a narrow offline HTTP boundary.
+            # Response 与 bodies 在窄离线 HTTP 边界后使用真实已构建包字节。
+            response = {"info": {"name": self.plan["name"], "version": self.plan["sdk_version"]}, "urls": [
+                {"filename": record["filename"], "size": record["size"], "digests": {"sha256": record["sha256"]},
+                 "yanked": False, "packagetype": "bdist_wheel" if kind == "wheel" else "sdist",
+                 "url": "https://files.pythonhosted.org/" + record["filename"]}
+                for kind, record in self.artifacts.items()]}
+            bodies = [io.BytesIO(json.dumps(response).encode()),
+                      *[io.BytesIO((self.dist / record["filename"]).read_bytes()) for record in self.artifacts.values()]]
+            # Output and expected_environment bind the relative case to the same actual absolute venv root.
+            # Output 与 expected_environment 将相对用例绑定到同一个实际绝对 venv 根。
+            output = Path("official-pypi") if relative_output else root / "official-pypi"
+            expected_environment = root / "official-pypi/index-consumer"
+            # Original_run remains the real production subprocess implementation; observations contain no secrets.
+            # Original_run 保持真实生产子进程实现；observations 不包含秘密。
+            original_run = release.run
+            observations = []
+            # Probe replaces only pip/native business payloads and reports the interpreter that actually launched.
+            # Probe 仅替换 pip／原生业务载荷，报告实际启动的解释器。
+            probe = "import json,os,sys; print(json.dumps({'executable':sys.executable,'prefix':sys.prefix,'cwd':os.getcwd()}))"
+
+            def observe_payload(command, cwd=None, env=None):
+                """Launch command's actual executable in its actual cwd/env through original_run; return observed JSON.
+                经 original_run 在 command 的实际 cwd／env 启动实际 executable；返回观察 JSON。
+                command must be exactly a production pip or embedded consumer payload, never a general mocked process.
+                command 必须精确属于生产 pip 或嵌入消费者载荷，绝非泛用模拟进程。
+                """
+                self.assertIn(command[1:4], (["-I", "-m", "pip"], ["-I", "-m", "luaskills.examples.embedded_runtime"]))
+                # Actual_output is produced by a real venv Python process; FileNotFoundError is deliberately unaltered.
+                # Actual_output 来自真实 venv Python 进程；FileNotFoundError 故意原样传播。
+                actual_output = original_run([command[0], "-I", "-c", probe], cwd=cwd, env=env)
+                observations.append({"command": command, "cwd_argument": str(cwd), "actual": json.loads(actual_output),
+                    "pip_config_file": None if env is None else env.get("PIP_CONFIG_FILE"),
+                    "injected_pip_setting_present": env is not None and "PIP_EXTRA_INDEX_URL" in env})
+                return actual_output
+
+            try:
+                os.chdir(root)
+                with patch.object(release.urllib.request, "urlopen", side_effect=bodies), \
+                        patch.object(release, "native_accept") as native_boundary, \
+                        patch.object(release, "run", side_effect=observe_payload), \
+                        patch.dict(os.environ, {"PIP_EXTRA_INDEX_URL": "controlled-unused-setting"}):
+                    release.verify_pypi(argparse.Namespace(aggregate=aggregate, inputs=inputs, output=output))
+                native_boundary.assert_called_once()
+            finally:
+                os.chdir(initial_directory)
+                print("INDEX_CONSUMER_PATH_OBSERVATIONS=" + json.dumps({"relative_output": relative_output, "observations": observations}))
+            self.assertEqual(len(observations), 2)
+            for observation in observations:
+                self.assertEqual(Path(observation["actual"]["prefix"]).resolve(), expected_environment)
+                self.assertEqual(Path(observation["actual"]["cwd"]).resolve(), expected_environment)
+                self.assertEqual(Path(observation["actual"]["executable"]).resolve(),
+                    (expected_environment / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")).resolve())
+                self.assertTrue(Path(observation["command"][0]).is_absolute(), "Consumer executable must remain absolute when cwd changes")
+                self.assertTrue(Path(observation["cwd_argument"]).is_absolute(), "Consumer environment must be absolute before creation")
+            self.assertEqual(observations[0]["command"][1:], ["-I", "-m", "pip", "--isolated", "install", "--no-cache-dir",
+                "--no-deps", "--only-binary=:all:", "--index-url", "https://pypi.org/simple", "--require-hashes", "-r",
+                str(expected_environment.parent / "requirements.txt")])
+            self.assertEqual(observations[0]["pip_config_file"], os.devnull)
+            self.assertFalse(observations[0]["injected_pip_setting_present"])
+            self.assertEqual(observations[1]["command"][1:], ["-I", "-m", "luaskills.examples.embedded_runtime",
+                "--library", "controlled-native-library", "--library-sha256", "0" * 64,
+                "--description", "controlled-native-description", "--mode", "both"])
+            self.assertEqual((expected_environment.parent / "requirements.txt").read_text(),
+                f"{self.plan['name']}=={self.plan['sdk_version']} --hash=sha256:{self.artifacts['wheel']['sha256']}\n")
+            return observations
+
+    def test_verify_pypi_absolute_output_launches_real_index_interpreter(self):
+        """Run the absolute-output control through production verify_pypi and real isolated interpreter calls.
+        经生产 verify_pypi 与真实隔离解释器调用执行绝对输出对照。
+        """
+        self.exercise_index_consumer_path(False)
+
+    def test_verify_pypi_relative_output_launches_real_index_interpreter(self):
+        """Run relative output through production verify_pypi; absolute executable/cwd prevents POSIX re-resolution.
+        经生产 verify_pypi 执行相对输出；绝对 executable／cwd 阻止 POSIX 二次解析。
+        """
+        self.exercise_index_consumer_path(True)
+
     def test_partial_pypi_recovery_hashes_actual_bytes_and_stages_only_missing(self):
         """Recover either actual partial artifact or full publication; reject changed bytes and unknown HTTP.
         恢复任一实际部分产物或完整发布；拒绝变化字节及未知 HTTP。
@@ -1270,6 +1368,9 @@ class RepositoryRootTests(unittest.TestCase):
         source = "a" * 40
         workflow = (ROOT / ".github/workflows/sdk-release.yml").read_bytes()
         oid = hashlib.sha1(b"blob " + str(len(workflow)).encode("ascii") + b"\0" + workflow).hexdigest()
+        # Version comes from the current SDK authority so completion and preflight share the exact tag fixture.
+        # Version 来自当前 SDK 权威，使 completion 与 preflight 共用精确标签夹具。
+        version = release.source_metadata(ROOT)["sdk_version"]
         # Base and endpoints bind every GET/POST to the exact declared repository and immutable source.
         # base 及 endpoints 将每次 GET／POST 绑定到精确声明仓库及不可变源码。
         base = "https://api.github.com/repos/" + release.SDK_REPOSITORY
@@ -1282,11 +1383,11 @@ class RepositoryRootTests(unittest.TestCase):
                   base + "/git/ref/heads/other": {"object": {"type": "commit", "sha": "b" * 40}},
                   definition: {"type": "file", "encoding": "base64", "sha": oid,
                                "content": base64.b64encode(workflow).decode("ascii")},
-                  base + "/git/ref/tags/v0.6.1": {"ref": "refs/tags/v0.6.1", "object": {"type": "commit", "sha": source}},
+                  base + "/git/ref/tags/v" + version: {"ref": "refs/tags/v" + version, "object": {"type": "commit", "sha": source}},
                   base + "/releases/assets/7": b"unchanged binary asset"}
-        # State holds response controls and observed requests only; builder remains the original opener factory.
-        # state 仅保存响应控制及已观察请求；builder 保持原 opener 工厂。
-        state = SimpleNamespace(base=base, source=source, workflow=workflow, oid=oid, definition=definition,
+        # State holds response controls/requests and the SDK-authoritative version; builder remains the original opener factory.
+        # state 保存响应控制／请求及 SDK 权威版本；builder 保持原 opener 工厂。
+        state = SimpleNamespace(base=base, source=source, workflow=workflow, oid=oid, definition=definition, version=version,
             endpoint=endpoint, routes=routes, requests=[], redirects=[], status=201, sha=oid,
             response_url=endpoint, blob_url=endpoint + "/" + oid, authority=authority)
         builder = release.urllib.request.build_opener
@@ -1343,7 +1444,7 @@ class RepositoryRootTests(unittest.TestCase):
         """Run the actual SDK preflight with state's fixed source and output receipt; return its original result.
         以 state 固定源码及 output 回执运行真实 SDK preflight；返回原结果。
         """
-        return release.publication_preflight(state.authority, state.source, "0.6.1")
+        return release.publication_preflight(state.authority, state.source, state.version)
 
     def test_root_preflight_and_nonempty_request_guards(self):
         """Accept one real-opener HTTP201 despite metadata push false, preserving authenticated GET/binary routes.
@@ -1415,7 +1516,7 @@ class RepositoryRootTests(unittest.TestCase):
                 elif case == "workflow-sha":
                     state.routes[state.definition]["sha"] = "b" * 40
                 else:
-                    state.routes[state.base + "/git/ref/tags/v0.6.1"]["object"]["sha"] = "b" * 40
+                    state.routes[state.base + "/git/ref/tags/v" + state.version]["object"]["sha"] = "b" * 40
                 # Output is a new local receipt; failed authorization must never manufacture successful evidence.
                 # output 为新本地回执；失败授权绝不能制造成功证据。
                 output = Path(temporary) / "rejected.json"
