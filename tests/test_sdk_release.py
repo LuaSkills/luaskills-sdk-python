@@ -934,7 +934,9 @@ class ReleaseGateTests(unittest.TestCase):
             """Read exact repository/release/asset pages, rejecting all unmodeled endpoints.
             读取精确仓库、发布及资产页，拒绝所有未建模端点。
             """
-            if url == base:
+            # The empty REST path is the canonical repository root; asset paths retain the original slash separator.
+            # 空 REST 路径为规范仓库根；资产路径保留原斜杠分隔符。
+            if url == "https://api.github.com/repos/" + release.SDK_REPOSITORY:
                 return {"default_branch": "main"}
             if url == base + "releases/17":
                 return dict(record)
@@ -1209,6 +1211,97 @@ class ArtifactMediaTests(unittest.TestCase):
             recovery.download_artifact(adapted, **arguments)
         self.assertTrue(reads)
         self.assertTrue(all(size == shared.MAX_BODY_BYTES + 1 for size in reads))
+
+
+class RepositoryRootTests(unittest.TestCase):
+    """Exercise real Python preflight and Core Request/opener against exact offline repository routes.
+    使用精确离线仓库路由测试真实 Python preflight 及 Core Request/opener。
+    """
+
+    def test_root_preflight_and_nonempty_request_guards(self):
+        """Require canonical root and preserve actual permission/tag/default/source/asset gates; return nothing.
+        要求规范根并保留实际权限／标签／默认分支／源码／资产门禁；无返回值。
+        """
+        # Load the explicit frozen Core, preserving its real HTTP and SafeRedirect implementations.
+        # 加载明确冻结 Core，保留其真实 HTTP 及 SafeRedirect 实现。
+        import urllib.response
+        # Root is the explicit Core source whose original Http and adjacent imports are exercised.
+        # root 为明确 Core 源码，测试使用其中原 Http 及相邻导入。
+        root = Path(os.environ["SDK_RELEASE_TEST_CORE_ROOT"]).resolve(strict=True)
+        sys.path.insert(0, str(root / "scripts/release"))
+        import sdk_prerequisites as authority
+        self.assertEqual(Path(authority.__file__).resolve(), root / "scripts/release/sdk_prerequisites.py")
+        # Base is the exact SDK repository root; source is the fixed commit fixture used by the original tag gate.
+        # base 为精确 SDK 仓库根；source 为原标签门禁使用的固定提交夹具。
+        base = "https://api.github.com/repos/" + release.SDK_REPOSITORY
+        source = "a" * 40
+        # Routes map complete URLs to exact API records, preserving the trailing-slash failure as a separate endpoint.
+        # routes 将完整 URL 映射到精确 API 记录，保留尾斜杠失败为独立端点。
+        routes = {base: {"full_name": release.SDK_REPOSITORY, "permissions": {"push": True}, "default_branch": "main"},
+                  base + "/git/ref/tags/v0.6.1": {"object": {"type": "commit", "sha": source}},
+                  base + "/releases/assets/7": {"id": 7}}
+        # Requests store nonsecret transport facts; redirects retain original handlers; builder is the original factory.
+        # requests 保存非秘密传输事实；redirects 保留原 handlers；builder 为原工厂。
+        requests, redirects = [], []
+        builder = release.urllib.request.build_opener
+
+        class OfflineHTTPS(release.urllib.request.HTTPSHandler):
+            """Serve exact declared API bytes and real HTTP404 for the trailing-slash repository root.
+            提供精确已声明 API 字节，并对尾斜杠仓库根返回真实 HTTP404。
+            """
+
+            def https_open(self, request):
+                """Observe safe Request facts and return its exact original-opener-compatible response.
+                观察安全 Request 事实并返回其精确兼容原 opener 的响应。
+                """
+                requests.append((request.full_url, request.get_header("Accept"), request.get_method(), request.timeout))
+                # This fixture never normalizes paths or substitutes a second successful endpoint.
+                # 此夹具绝不规范化路径或替换第二个成功端点。
+                # Body and status preserve the exact selected response; response enters the real HTTP error processor.
+                # body 与 status 保留精确选中响应；response 进入真实 HTTP 错误处理器。
+                body, status = (b'{"message":"Not Found"}', 404) if request.full_url == base + "/" else (json.dumps(routes[request.full_url]).encode(), 200)
+                response = urllib.response.addinfourl(io.BytesIO(body), {"Content-Type": "application/json"}, request.full_url, status)
+                response.msg = "Not Found" if status == 404 else "OK"
+                return response
+
+        def build_with_network_fixture(*handlers):
+            """Retain original SafeRedirect handlers and add only offline HTTPS I/O; return a real opener.
+            保留原 SafeRedirect handlers 且仅添加离线 HTTPS I/O；返回真实 opener。
+            """
+            redirects.extend(handlers)
+            return builder(*handlers, OfflineHTTPS())
+
+        with patch.object(release.urllib.request, "build_opener", side_effect=build_with_network_fixture), \
+                patch.dict(os.environ, {"GH_TOKEN": "fixture-only", "GITHUB_REF": "refs/heads/main", "GITHUB_TOKEN": "fixture-only"}):
+            release.publication_preflight(authority, source, "0.6.1")
+            self.assertEqual(requests[0], (base, "application/json", "GET", 60))
+            # Nonempty paths retain their exact URL, and original Core binary media still returns original bytes.
+            # 非空路径保留精确 URL，且原 Core 二进制媒体仍返回原字节。
+            # Http is the same authoritative Core client used by production release_get.
+            # http 为生产 release_get 使用的同一权威 Core 客户端。
+            http = authority.Http()
+            self.assertEqual(release.release_get(http, "releases/assets/7"), {"id": 7})
+            self.assertEqual(http.get(base + "/releases/assets/7", binary=True)[0], b'{"id": 7}')
+            self.assertEqual(requests[-1], (base + "/releases/assets/7", "application/octet-stream", "GET", 60))
+            routes[base]["permissions"]["push"] = False
+            with self.assertRaisesRegex(ValueError, "write permission"):
+                release.publication_preflight(authority, source, "0.6.1")
+            routes[base]["permissions"]["push"] = True
+            routes[base + "/git/ref/tags/v0.6.1"]["object"]["sha"] = "b" * 40
+            with self.assertRaisesRegex(ValueError, "tag differs"):
+                release.publication_preflight(authority, source, "0.6.1")
+            routes[base + "/git/ref/tags/v0.6.1"]["object"]["sha"] = source
+            # Original immutable publication rejects a wrong default branch before any mutation command.
+            # 原不可变发布在任何修改命令前拒绝错误默认分支。
+            routes[base]["default_branch"] = "other"
+            # Mutate observes only the forbidden mutation boundary after the real HTTP/default-branch rejection.
+            # mutate 仅观察真实 HTTP／默认分支拒绝后的禁止修改边界。
+            with patch.object(release, "run") as mutate, self.assertRaisesRegex(ValueError, "default branch"):
+                release.publish_immutable(authority, "v0.6.1", source, Path("unused"))
+            mutate.assert_not_called()
+            routes[base]["default_branch"] = "main"
+            self.assertTrue(redirects)
+            self.assertTrue(all(isinstance(handler, authority.SafeRedirect) for handler in redirects))
 
 
 if __name__ == "__main__":

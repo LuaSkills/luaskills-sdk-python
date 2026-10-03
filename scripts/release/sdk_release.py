@@ -660,7 +660,10 @@ def release_get(http, path):
     """Read fixed SDK repository API path using http; return the authenticated JSON response.
     使用 http 读取固定 SDK 仓库 API path；返回已认证 JSON 响应。
     """
-    return http.json(f"https://api.github.com/repos/{SDK_REPOSITORY}/{path}")
+    # The repository root is the exact no-slash endpoint; nonempty REST paths retain their original bytes.
+    # 仓库根为精确无尾斜杠端点；非空 REST 路径保留原字节。
+    url = f"https://api.github.com/repos/{SDK_REPOSITORY}" + ("" if path == "" else "/" + path)
+    return http.json(url)
 
 
 def sdk_tag(http, tag, source_sha):
