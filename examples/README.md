@@ -79,7 +79,7 @@ If pump construction is interrupted after its thread starts, `transport.callback
 For local acceptance of exact distribution artifacts against a frozen native candidate, use the independent native gate. The description is the candidate's actual `luaskills_ffi_embedded_describe_v1` JSON bytes. The SDK validates its existing generated contract and requires full equality with the loaded library description:
 
 ```powershell
-python scripts/verify_embedded_native_distribution.py --wheel dist\luaskills_sdk-0.6.0-py3-none-any.whl --sdist dist\luaskills_sdk-0.6.0.tar.gz --library D:\candidate\luaskills.dll --library-sha256 <frozen-library-sha256> --description D:\candidate\core-description.json
+python scripts/verify_embedded_native_distribution.py --wheel dist\luaskills_sdk-0.6.1-py3-none-any.whl --sdist dist\luaskills_sdk-0.6.1.tar.gz --library D:\candidate\luaskills.dll --library-sha256 <frozen-library-sha256> --description D:\candidate\core-description.json
 ```
 
 Select the exact wheel/sdist names from your build. The gate requires missing-library and identity errors to fail, runs the existing offline distribution checks, uses `twine check --strict` when already available, rebuilds only the selected sdist with locally installed build tools, and installs each wheel into a separate venv with user site and checkout imports disabled. Each installation also runs actual startup-refusal, late-start interruption, reserve-cancellation and unknown-delivery regressions; native skips cannot pass this gate. No package publication or runtime download occurs. Build tools must already satisfy `pyproject.toml`; an unavailable local backend fails the sdist build. Passing on one platform does not prove acceptance on other platforms or release libraries.
