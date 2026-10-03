@@ -51,15 +51,74 @@ class Publication:
             with (Path(directory) / name).open("xb") as stream:
                 stream.write(body)
 
-    def archive_tree(self, destination, trees):
-        """Archive named trees deterministically into destination; reject links and return nothing.
-        将命名 trees 确定性归档至 destination；拒绝链接，无返回值。
+    def core_proof_members(self, prerequisites_path, shared):
+        """Select validated Core proof files for both signed SDK stages; return relative-name/Path pairs.
+        为 SDK 两个签名阶段选择已验证 Core 证明文件；返回相对名称与 Path 映射。
+        prerequisites_path identifies the complete original report; shared is the frozen Core prerequisite authority.
+        prerequisites_path 指定完整原报告；shared 为冻结 Core 前置条件权威。
         """
+        # Keep every audit byte; only exact official auxiliary/copy archives are redundant for SDK consumers.
+        # 保留全部审计字节；仅精确正式辅助归档及归档副本对 SDK 消费者冗余。
+        root = Path(prerequisites_path).resolve(strict=True).parent
+        # Members retain all otherwise unclassified files, never a broad prefix or size-based exclusion.
+        # Members 保留所有未分类文件，绝不采用宽泛前缀或按大小排除。
+        members = {}
+        for path in sorted(root.rglob("*")):
+            self.api.require(not path.is_symlink() and path.resolve().is_relative_to(root), "Core proof contains an escaping path or symlink")
+            if path.is_file():
+                members[path.relative_to(root).as_posix()] = path
+        # Core owns the complete report and all five native/source/build/contract byte checks.
+        # Core 拥有完整报告及全部五平台原生、源码、构建、契约字节校验。
+        core = shared.candidate
+        proof = core.read_json(Path(prerequisites_path))
+        self.api.require(proof["phase"] == "complete" and proof["complete"] is True and isinstance(proof["registry"], dict),
+                         "Complete Core proof is required before SDK member selection")
+        for platform in core.PLATFORMS:
+            shared.resolve_sdk_inputs(prerequisites_path, platform)
+        # Manifest source ownership is already authenticated by the original Core resolver.
+        # Manifest 的源码归属已由原 Core 解析器认证。
+        manifest = core.read_json(root / "candidate/candidate-manifest.json")
+        # Archive names derive solely from the frozen Core declarations and authenticated source record.
+        # 归档名仅从冻结 Core 声明及已认证源码记录派生。
+        archives = {f"luaskills-{family}-{platform}.tar.gz" for platform in core.PLATFORMS for family in core.ARCHIVE_FAMILIES}
+        source_name = manifest["source_archive"]["name"]
+        # Manifest hashes bind auxiliary archives as well as the required FFI/source originals.
+        # Manifest 摘要绑定辅助归档及必需 FFI、源码原件。
+        manifest_hashes = {name: sha for record in manifest["platforms"] for name, sha in record["archives"].items()}
+        manifest_hashes[source_name] = manifest["source_archive"]["sha256"]
+        # Exact paths exclude only auxiliary candidate archives and all downloaded archive copies.
+        # 精确路径仅排除候选辅助归档及全部已下载归档副本。
+        excluded = {"candidate/" + name for name in archives if name not in {f"luaskills-ffi-sdk-{platform}.tar.gz" for platform in core.PLATFORMS}}
+        excluded.update("downloads/assets/" + name for name in archives | {source_name})
+        for name in sorted(archives | {source_name}):
+            # Both actual copies must equal the official asset and authenticated candidate manifest before omission.
+            # 省略前，两份实际副本必须均等于正式资产及已认证候选清单。
+            expected = proof["github"]["assets"][name]["sha256"]
+            self.api.require(expected == manifest_hashes[name], "Core archive manifest differs from official asset: " + name)
+            for relative in ("candidate/" + name, "downloads/assets/" + name):
+                self.api.require(relative in members and core.digest(members[relative].read_bytes()) == expected,
+                                 "Core archive copy is missing or differs from official asset: " + relative)
+        return {name: path for name, path in members.items() if name not in excluded}
+
+    def archive_tree(self, destination, trees, core_root, authority):
+        """Archive named trees into destination using the validated core_root selection; return nothing.
+        使用已验证 core_root 选择将命名 trees 归档至 destination；无返回值。
+        trees maps exact archive prefixes to roots; authority is the frozen Core module and links are rejected.
+        trees 将精确归档前缀映射到根；authority 为冻结 Core 模块，并拒绝链接。
+        """
+        # Selected files apply only to the explicit Core root; all other evidence retains its original bytes.
+        # 所选文件仅应用于显式 Core 根；其他证据保留原字节。
+        selected = set(self.core_proof_members(Path(core_root) / "prerequisites.json", authority).values())
+        # Normalize the single declared root, without searching for alternative evidence directories.
+        # 归一化唯一声明根，不搜索备用证据目录。
+        core_root = Path(core_root).resolve(strict=True)
         with zipfile.ZipFile(destination, "x", compression=zipfile.ZIP_DEFLATED) as archive:
             for prefix, root in trees.items():
                 for path in sorted(Path(root).rglob("*")):
+                    self.api.require(not path.is_symlink(), "Publication archive cannot contain symlinks")
                     if path.is_file():
-                        self.api.require(not path.is_symlink(), "Publication archive cannot contain symlinks")
+                        if path.resolve().is_relative_to(core_root) and path.resolve() not in selected:
+                            continue
                         member = zipfile.ZipInfo(prefix + "/" + path.relative_to(root).as_posix(), date_time=(1980, 1, 1, 0, 0, 0))
                         member.compress_type = zipfile.ZIP_DEFLATED
                         archive.writestr(member, path.read_bytes())
@@ -124,7 +183,8 @@ class Publication:
         (args.output / "artifacts.json").write_bytes((args.artifacts / "artifacts.json").read_bytes())
         for record in aggregate["artifacts"].values():
             (args.output / record["filename"]).write_bytes((args.artifacts / record["filename"]).read_bytes())
-        self.archive_tree(args.output / "candidate-evidence.zip", {"evidence": args.evidence, "reports": args.reports})
+        self.archive_tree(args.output / "candidate-evidence.zip", {"evidence": args.evidence, "reports": args.reports},
+                          args.evidence / "core", authority)
         run_id, attempt = int(os.environ["GITHUB_RUN_ID"]), int(os.environ["GITHUB_RUN_ATTEMPT"])
         binding = {"schema_version": recovery.SCHEMA_VERSION, "kind": "sdk-candidate", "repository": self.api.SDK_REPOSITORY,
                    "workflow_path": self.api.SDK_WORKFLOW, "source_sha": plan["source_sha"], "run_id": run_id,
@@ -305,7 +365,8 @@ class Publication:
         # 当前原生日志归属新完成凭据，不归属不可变原矩阵。
         (args.output / "formal-consumer.log").write_bytes((args.proof.parent / "native.log").read_bytes())
         (args.output / "core-prerequisites.json").write_bytes(args.publication_prerequisites.read_bytes())
-        self.archive_tree(args.output / "completion-evidence.zip", {"core": args.publication_prerequisites.parent})
+        self.archive_tree(args.output / "completion-evidence.zip", {"core": args.publication_prerequisites.parent},
+                          args.publication_prerequisites.parent, authority)
         completion = {"schema_version": recovery.SCHEMA_VERSION, "kind": "sdk-completion",
             "repository": self.api.SDK_REPOSITORY, "workflow_path": self.api.SDK_WORKFLOW,
             "sdk_source_sha": plan["source_sha"], "sdk_version": plan["sdk_version"],

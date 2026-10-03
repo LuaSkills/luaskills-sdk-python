@@ -16,7 +16,7 @@ import tempfile
 import unittest
 import urllib.error
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 # Test imports the production helper directly instead of duplicating its decisions.
 # 测试直接导入正式 helper，不复制其判断。
@@ -582,6 +582,11 @@ class ReleaseGateTests(unittest.TestCase):
         """
         recovery = self.recovery_authority()
         coordinator = release.publication_coordinator()
+        # Existing orchestration fixtures explicitly replace the unavailable real Core archive/native boundary.
+        # 既有编排夹具显式替换其不具备的真实 Core 归档及原生边界。
+        coordinator.core_proof_members = Mock(side_effect=lambda report, _: {
+            path.relative_to(Path(report).parent).as_posix(): path
+            for path in sorted(Path(report).parent.rglob("*")) if path.is_file()})
         authority = unittest.mock.Mock(MAX_BODY_BYTES=recovery.MAX_ARTIFACT_BYTES)
         authority.candidate.PLATFORMS = {"fixture-platform": ("fixture", "linux", "x86_64"),
                                         "fixture-other": ("fixture", "macos", "aarch64")}
@@ -614,6 +619,7 @@ class ReleaseGateTests(unittest.TestCase):
                "GITHUB_WORKFLOW_SHA": plan["source_sha"], "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1"}
         with patch.object(coordinator, "authorities", return_value=(authority, recovery)), patch.dict(os.environ, env):
             binding = coordinator.candidate_prepare(args)
+        coordinator.core_proof_members.assert_called_once_with(evidence / "core/prerequisites.json", authority)
         (args.output / release.CANDIDATE_ATTESTATION).write_bytes(b"controlled official-verifier fixture")
         coordinator.api.verify_attestation = self.signature_fixture
         return SimpleNamespace(coordinator=coordinator, authority=authority, recovery=recovery,
@@ -767,7 +773,9 @@ class ReleaseGateTests(unittest.TestCase):
                 with patch.object(fixture.coordinator, "authorities", return_value=(fixture.authority, fixture.recovery)), \
                         patch.object(fixture.coordinator, "current_intent", return_value=current), patch.object(fixture.coordinator, "main_release"), \
                         patch.object(fixture.coordinator.api, "publish_immutable", return_value={"release_id": attempt}) as publish:
+                    fixture.coordinator.core_proof_members.reset_mock()
                     completion = fixture.coordinator.completion_prepare(args)
+                    fixture.coordinator.core_proof_members.assert_called_once_with(core / "prerequisites.json", fixture.authority)
                     publish.assert_not_called()
                     bundle = fixture.root / ("bundle-" + str(attempt))
                     bundle.write_bytes(b"controlled official-verifier fixture")
@@ -830,7 +838,8 @@ class ReleaseGateTests(unittest.TestCase):
             release.write_json(completion_root / "formal-consumer.json", {"controlled_original_consumer_fixture": True})
             (completion_root / "formal-consumer.log").write_bytes(b"controlled original consumer log fixture")
             release.write_json(completion_root / "core-prerequisites.json", {"controlled_original_core_fixture": True})
-            coordinator.archive_tree(completion_root / "completion-evidence.zip", {"core": fixture.root / "evidence/core"})
+            coordinator.archive_tree(completion_root / "completion-evidence.zip", {"core": fixture.root / "evidence/core"},
+                                     fixture.root / "evidence/core", fixture.authority)
             main_state = {"release_id": 17, "tag": "v" + fixture.plan["sdk_version"],
                           "source_sha": fixture.plan["source_sha"], "server_release_immutable": True}
             wrapper = coordinator.verified_binding(fixture.candidate, fixture.recovery, fixture.plan["source_sha"], 123, 1)
@@ -1025,6 +1034,54 @@ class ReleaseGateTests(unittest.TestCase):
                         self.assertEqual(bodies, required)
                     self.assertEqual(Path(state.commands[0][4]).name, missing_name)
                     self.assertEqual(sum("/assets?" in call.args[0] for call in state.http.json.call_args_list), 2)
+
+
+class CoreProofSelectionTests(unittest.TestCase):
+    """Exercise original complete Core bytes with the real resolver; return no publication evidence.
+    使用真实解析器验证原完整 Core 字节；不产生发布证明。
+    """
+
+    @unittest.skipUnless("SDK_RELEASE_TEST_CORE_PROOF" in os.environ, "Explicit original complete Core proof required")
+    def test_audit_retention_missing_required_and_tampered_copy(self):
+        """Select original proof, retain every audit file, and reject missing/tampered bytes without synthetic large data.
+        选择原证明、保留全部审计文件，并拒绝缺失、篡改字节，不合成大数据。
+        """
+        # Original and shared authority are explicit read-only inputs, with no alternate directory probing.
+        # Original 及 shared 权威为明确只读输入，不探测备用目录。
+        original = Path(os.environ["SDK_RELEASE_TEST_CORE_PROOF"]).resolve(strict=True)
+        authority_root = Path(os.environ["SDK_RELEASE_TEST_CORE_ROOT"]).resolve(strict=True)
+        sys.path.insert(0, str(authority_root / "scripts/release"))
+        import sdk_prerequisites as shared
+        # Coordinator uses the real selector rather than the older orchestration fixture replacement.
+        # Coordinator 使用真实选择函数，不使用旧编排夹具替代。
+        coordinator = release.publication_coordinator()
+        with tempfile.TemporaryDirectory(prefix="cp-") as temporary:
+            # An independent short-path copy preserves producer bytes without Windows hard-link path limits.
+            # 独立短路径副本保留生产者字节，不受 Windows 硬链接路径上限影响。
+            root = Path(temporary) / "core"
+            shutil.copytree(original, root, copy_function=shutil.copyfile)
+            selected = coordinator.core_proof_members(root / "prerequisites.json", shared)
+            self.assertIn("candidate/luaskills-ffi-sdk-windows-x64.tar.gz", selected)
+            self.assertNotIn("candidate/luaskills-demo-ffi-windows-x64.tar.gz", selected)
+            self.assertNotIn("downloads/assets/luaskills-ffi-sdk-windows-x64.tar.gz", selected)
+            for path in (root / "registry").rglob("*"):
+                if path.is_file():
+                    self.assertEqual(selected[path.relative_to(root).as_posix()].read_bytes(), path.read_bytes())
+            # Missing authenticated manifest must still fail before any archive selection succeeds.
+            # 已认证清单缺失时，任何归档选择成功前仍必须失败。
+            required = root / "downloads/candidate-manifest.json"
+            required.unlink()
+            with self.assertRaises(FileNotFoundError):
+                coordinator.core_proof_members(root / "prerequisites.json", shared)
+            shutil.copyfile(original / "downloads/candidate-manifest.json", required)
+            # Even a discarded source copy must retain the actual official hash.
+            # 即使是被省略的源码副本，也必须保留实际正式摘要。
+            source = shared.candidate.read_json(root / "candidate/candidate-manifest.json")["source_archive"]["name"]
+            copy = root / "downloads/assets" / source
+            copy.unlink()
+            copy.write_bytes(b"tampered archive copy")
+            with self.assertRaisesRegex(ValueError, "differs from official asset"):
+                coordinator.core_proof_members(root / "prerequisites.json", shared)
 
 
 if __name__ == "__main__":
