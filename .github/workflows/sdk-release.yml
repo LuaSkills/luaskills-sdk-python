@@ -383,7 +383,7 @@ jobs:
           --github-output "$GITHUB_OUTPUT"
       # Upload only missing measured files after hashing existing official bytes; never skip unknown conflicts.
       # 核算现有正式字节后仅上传缺少的已测文件；绝不跳过未知冲突。
-      - uses: pypa/gh-action-pypi-publish@6733eb7d741f0b11ec6a39b58540dab7590f9b7d
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33
         if: steps.publication.outputs.upload_required == 'true'
         with:
           packages-dir: fresh-publication/upload/packages
