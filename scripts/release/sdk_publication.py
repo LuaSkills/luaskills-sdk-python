@@ -187,10 +187,10 @@ class Publication:
                          and os.environ["GITHUB_SHA"] == os.environ["GITHUB_WORKFLOW_SHA"] == sdk_source_sha,
                          "Current completion must use the original fixed SDK source and workflow definition")
         self.checked_source(sdk_source_sha)
-        repository = self.api.release_get(authority.Http(), "")
-        self.api.require(os.environ["GITHUB_REF"] == "refs/heads/" + repository["default_branch"]
-                         and repository["permissions"]["push"] is True,
-                         "Current completion requires the default branch and issuing repository write token")
+        # The same authenticated workflow-blob write gate serves publication and completion, never metadata roles.
+        # 相同已认证工作流 blob 写门禁服务发布及 completion，绝不使用元数据角色。
+        self.api.repository_write_preflight(authority, sdk_source_sha,
+                                           self.api.source_metadata(self.sdk_root)["sdk_version"], authority.Http())
         return {"run_id": int(os.environ["GITHUB_RUN_ID"]), "run_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"]),
                 "source_sha": os.environ["GITHUB_SHA"], "completion_intent": intent}
 

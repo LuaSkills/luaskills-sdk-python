@@ -3,7 +3,10 @@
 """
 
 import argparse
+import base64
 import copy
+import contextlib
+import hashlib
 import importlib.util
 import io
 import json
@@ -84,6 +87,38 @@ class ReleaseGateTests(unittest.TestCase):
         output = release.run([sys.executable, "-m", "twine", "check", "--strict",
                               *[str(self.dist / record["filename"]) for record in self.artifacts.values()]])
         self.assertIn("PASSED", output)
+
+    def test_actual_blob_denial_stops_real_pypi_preparation(self):
+        """Run actual recheck/current_intent and transport; HTTP403 blocks fresh Core and PyPI upload preparation.
+        运行实际 recheck／current_intent 及传输；HTTP403 阻止新 Core 验收及 PyPI 上传准备。
+        """
+        # Plan, prerequisite and reports are the existing complete fixture; only unrelated native verification is isolated.
+        # plan、prerequisite 及 reports 为既有完整夹具；仅隔离无关原生验证。
+        plan, prerequisite, reports = self.evidence()
+        with tempfile.TemporaryDirectory(prefix="ls-blob-pypi-") as temporary, RepositoryRootTests.transport(self) as state:
+            # Directory holds genuine package-bound aggregate and prerequisite bytes used by actual recheck.
+            # directory 保存实际 recheck 使用的真实绑定包聚合及前置字节。
+            directory = Path(temporary)
+            path, aggregate = directory / "prerequisites.json", directory / "aggregate.json"
+            release.write_json(path, prerequisite)
+            plan["prerequisites_sha256"] = release.sha256(path)
+            release.write_json(aggregate, {"accepted": True, "plan": plan, "artifacts": self.artifacts})
+            # Coordinator retains its actual HTTP/write gate; only local Git identity is controlled for the fixture.
+            # coordinator 保留实际 HTTP／写门禁；仅控制夹具的本地 Git 身份。
+            coordinator = release.publication_coordinator()
+            state.status = 403
+            with patch.object(release, "core_module", return_value=state.authority), \
+                    patch.object(release, "publication_coordinator", return_value=coordinator), \
+                    patch.object(coordinator, "checked_source"), \
+                    patch.object(state.authority, "recheck") as fresh_core, \
+                    patch.object(release, "prepare_publish") as upload:
+                with self.assertRaises(release.urllib.error.HTTPError) as rejection:
+                    release.recheck(argparse.Namespace(aggregate=aggregate, prerequisites=path, artifacts=self.dist,
+                        core_root=ROOT, output=directory / "fresh", intent="publish", github_output=None))
+                self.assertEqual(rejection.exception.code, 403)
+                fresh_core.assert_not_called()
+                upload.assert_not_called()
+            self.assertFalse((directory / "fresh/publish-proof.json").exists())
 
     def test_changed_package_bytes_and_wrong_default_core_tag_fail(self):
         """Reject a changed byte or different explicit core tag in real packages; return nothing.
@@ -1214,94 +1249,191 @@ class ArtifactMediaTests(unittest.TestCase):
 
 
 class RepositoryRootTests(unittest.TestCase):
-    """Exercise real Python preflight and Core Request/opener against exact offline repository routes.
-    使用精确离线仓库路由测试真实 Python preflight 及 Core Request/opener。
+    """Exercise exact repository routes and existing-blob write authorization through real HTTPS openers.
+    通过真实 HTTPS openers 验证精确仓库路由及既有 blob 写授权。
     """
 
-    def test_root_preflight_and_nonempty_request_guards(self):
-        """Require canonical root and preserve actual permission/tag/default/source/asset gates; return nothing.
-        要求规范根并保留实际权限／标签／默认分支／源码／资产门禁；无返回值。
+    @contextlib.contextmanager
+    def transport(self):
+        """Yield exact offline release state using original Request/opener/redirect guards; return no network side effects.
+        使用原 Request／opener／重定向护栏产生精确离线 release 状态；无网络副作用。
         """
-        # Load the explicit frozen Core, preserving its real HTTP and SafeRedirect implementations.
-        # 加载明确冻结 Core，保留其真实 HTTP 及 SafeRedirect 实现。
         import urllib.response
-        # Root is the explicit Core source whose original Http and adjacent imports are exercised.
-        # root 为明确 Core 源码，测试使用其中原 Http 及相邻导入。
+        # The explicit frozen Core supplies its original Http/opener/body decoder, with no copied implementation.
+        # 明确冻结 Core 提供原 Http／opener／正文解码器，不复制实现。
         root = Path(os.environ["SDK_RELEASE_TEST_CORE_ROOT"]).resolve(strict=True)
         sys.path.insert(0, str(root / "scripts/release"))
         import sdk_prerequisites as authority
         self.assertEqual(Path(authority.__file__).resolve(), root / "scripts/release/sdk_prerequisites.py")
-        # Base is the exact SDK repository root; source is the fixed commit fixture used by the original tag gate.
-        # base 为精确 SDK 仓库根；source 为原标签门禁使用的固定提交夹具。
-        base = "https://api.github.com/repos/" + release.SDK_REPOSITORY
+        # Source and workflow bytes identify the sole current definition; OID uses Git's real blob format.
+        # source 及 workflow 字节标识唯一当前定义；oid 使用真实 Git blob 格式。
         source = "a" * 40
-        # Routes map complete URLs to exact API records, preserving the trailing-slash failure as a separate endpoint.
-        # routes 将完整 URL 映射到精确 API 记录，保留尾斜杠失败为独立端点。
-        routes = {base: {"full_name": release.SDK_REPOSITORY, "permissions": {"push": True}, "default_branch": "main"},
-                  base + "/git/ref/tags/v0.6.1": {"object": {"type": "commit", "sha": source}},
-                  base + "/releases/assets/7": {"id": 7}}
-        # Requests store nonsecret transport facts; redirects retain original handlers; builder is the original factory.
-        # requests 保存非秘密传输事实；redirects 保留原 handlers；builder 为原工厂。
-        requests, redirects = [], []
+        workflow = (ROOT / ".github/workflows/sdk-release.yml").read_bytes()
+        oid = hashlib.sha1(b"blob " + str(len(workflow)).encode("ascii") + b"\0" + workflow).hexdigest()
+        # Base and endpoints bind every GET/POST to the exact declared repository and immutable source.
+        # base 及 endpoints 将每次 GET／POST 绑定到精确声明仓库及不可变源码。
+        base = "https://api.github.com/repos/" + release.SDK_REPOSITORY
+        endpoint = base + "/git/blobs"
+        definition = base + "/contents/.github/workflows/sdk-release.yml?ref=" + source
+        # Routes retain exact release fields; false metadata push deliberately cannot substitute for real authorization.
+        # routes 保留精确 release 字段；刻意为 false 的元数据 push 不能代替真实授权。
+        routes = {base: {"full_name": release.SDK_REPOSITORY, "permissions": {"push": False}, "default_branch": "main"},
+                  base + "/git/ref/heads/main": {"object": {"type": "commit", "sha": source}},
+                  base + "/git/ref/heads/other": {"object": {"type": "commit", "sha": "b" * 40}},
+                  definition: {"type": "file", "encoding": "base64", "sha": oid,
+                               "content": base64.b64encode(workflow).decode("ascii")},
+                  base + "/git/ref/tags/v0.6.1": {"ref": "refs/tags/v0.6.1", "object": {"type": "commit", "sha": source}},
+                  base + "/releases/assets/7": b"unchanged binary asset"}
+        # State holds response controls and observed requests only; builder remains the original opener factory.
+        # state 仅保存响应控制及已观察请求；builder 保持原 opener 工厂。
+        state = SimpleNamespace(base=base, source=source, workflow=workflow, oid=oid, definition=definition,
+            endpoint=endpoint, routes=routes, requests=[], redirects=[], status=201, sha=oid,
+            response_url=endpoint, blob_url=endpoint + "/" + oid, authority=authority)
         builder = release.urllib.request.build_opener
 
         class OfflineHTTPS(release.urllib.request.HTTPSHandler):
-            """Serve exact declared API bytes and real HTTP404 for the trailing-slash repository root.
-            提供精确已声明 API 字节，并对尾斜杠仓库根返回真实 HTTP404。
+            """Replace only network I/O with exact JSON responses; real HTTP status processing still runs.
+            仅以精确 JSON 响应替换网络 I/O；真实 HTTP 状态处理仍执行。
             """
 
             def https_open(self, request):
-                """Observe safe Request facts and return its exact original-opener-compatible response.
-                观察安全 Request 事实并返回其精确兼容原 opener 的响应。
+                """Capture original Request and return selected status/body; parameters include immutable URL/body/token.
+                捕获原 Request 并返回选定 status／body；参数包括不可变 URL／正文／令牌。
                 """
-                requests.append((request.full_url, request.get_header("Accept"), request.get_method(), request.timeout))
-                # This fixture never normalizes paths or substitutes a second successful endpoint.
-                # 此夹具绝不规范化路径或替换第二个成功端点。
-                # Body and status preserve the exact selected response; response enters the real HTTP error processor.
-                # body 与 status 保留精确选中响应；response 进入真实 HTTP 错误处理器。
-                body, status = (b'{"message":"Not Found"}', 404) if request.full_url == base + "/" else (json.dumps(routes[request.full_url]).encode(), 200)
-                response = urllib.response.addinfourl(io.BytesIO(body), {"Content-Type": "application/json"}, request.full_url, status)
-                response.msg = "Not Found" if status == 404 else "OK"
+                state.requests.append(request)
+                # POST body is checked at the transport boundary, not by mirroring production conditionals.
+                # 在传输边界检查 POST 正文，不镜像生产条件分支。
+                if request.get_method() == "POST":
+                    self_test.assertEqual(request.full_url, endpoint)
+                    self_test.assertEqual(json.loads(request.data),
+                        {"content": base64.b64encode(workflow).decode("ascii"), "encoding": "base64"})
+                    body, status = json.dumps({"sha": state.sha, "url": state.blob_url}).encode(), state.status
+                    response_url = state.response_url
+                elif request.full_url == base + "/":
+                    body, status, response_url = b'{"message":"Not Found"}', 404, request.full_url
+                else:
+                    # Value is the sole route record; bytes stay unchanged for the existing binary path.
+                    # value 为唯一路由记录；现有二进制路径保留原字节。
+                    value = routes[request.full_url]
+                    body, status, response_url = value if isinstance(value, bytes) else json.dumps(value).encode(), 200, request.full_url
+                # Response reaches the real error processor; HTTP403 is not represented as a successful JSON object.
+                # response 进入真实错误处理器；HTTP403 不表示为成功 JSON 对象。
+                response = urllib.response.addinfourl(io.BytesIO(body), {"Content-Type": "application/json"}, response_url, status)
+                response.msg = "Created" if status == 201 else "Forbidden" if status == 403 else "OK"
                 return response
 
         def build_with_network_fixture(*handlers):
-            """Retain original SafeRedirect handlers and add only offline HTTPS I/O; return a real opener.
-            保留原 SafeRedirect handlers 且仅添加离线 HTTPS I/O；返回真实 opener。
+            """Retain original SafeRedirect handlers and append offline HTTPS I/O; return real OpenerDirector.
+            保留原 SafeRedirect handlers 并添加离线 HTTPS I/O；返回真实 OpenerDirector。
             """
-            redirects.extend(handlers)
+            state.redirects.extend(handlers)
             return builder(*handlers, OfflineHTTPS())
 
-        with patch.object(release.urllib.request, "build_opener", side_effect=build_with_network_fixture), \
-                patch.dict(os.environ, {"GH_TOKEN": "fixture-only", "GITHUB_REF": "refs/heads/main", "GITHUB_TOKEN": "fixture-only"}):
-            release.publication_preflight(authority, source, "0.6.1")
-            self.assertEqual(requests[0], (base, "application/json", "GET", 60))
-            # Nonempty paths retain their exact URL, and original Core binary media still returns original bytes.
-            # 非空路径保留精确 URL，且原 Core 二进制媒体仍返回原字节。
-            # Http is the same authoritative Core client used by production release_get.
-            # http 为生产 release_get 使用的同一权威 Core 客户端。
-            http = authority.Http()
-            self.assertEqual(release.release_get(http, "releases/assets/7"), {"id": 7})
-            self.assertEqual(http.get(base + "/releases/assets/7", binary=True)[0], b'{"id": 7}')
-            self.assertEqual(requests[-1], (base + "/releases/assets/7", "application/octet-stream", "GET", 60))
-            routes[base]["permissions"]["push"] = False
-            with self.assertRaisesRegex(ValueError, "write permission"):
-                release.publication_preflight(authority, source, "0.6.1")
-            routes[base]["permissions"]["push"] = True
-            routes[base + "/git/ref/tags/v0.6.1"]["object"]["sha"] = "b" * 40
-            with self.assertRaisesRegex(ValueError, "tag differs"):
-                release.publication_preflight(authority, source, "0.6.1")
-            routes[base + "/git/ref/tags/v0.6.1"]["object"]["sha"] = source
-            # Original immutable publication rejects a wrong default branch before any mutation command.
-            # 原不可变发布在任何修改命令前拒绝错误默认分支。
-            routes[base]["default_branch"] = "other"
-            # Mutate observes only the forbidden mutation boundary after the real HTTP/default-branch rejection.
-            # mutate 仅观察真实 HTTP／默认分支拒绝后的禁止修改边界。
-            with patch.object(release, "run") as mutate, self.assertRaisesRegex(ValueError, "default branch"):
-                release.publish_immutable(authority, "v0.6.1", source, Path("unused"))
-            mutate.assert_not_called()
-            routes[base]["default_branch"] = "main"
-            self.assertTrue(redirects)
-            self.assertTrue(all(isinstance(handler, authority.SafeRedirect) for handler in redirects))
+        # Self_test is this testcase used by the network handler; env binds only fixture credentials/current identity.
+        # self_test 为网络 handler 使用的本 testcase；env 仅绑定夹具凭据／当前身份。
+        self_test = self
+        env = {"GH_TOKEN": "fixture-only", "GITHUB_TOKEN": "unused-second-token", "GITHUB_REF": "refs/heads/main",
+               "GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_REPOSITORY": release.SDK_REPOSITORY,
+               "GITHUB_SHA": source, "GITHUB_WORKFLOW_SHA": source, "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1"}
+        with patch.dict(os.environ, env), patch.object(release.urllib.request, "build_opener", side_effect=build_with_network_fixture):
+            yield state
+        self.assertTrue(all(isinstance(handler, authority.SafeRedirect) for handler in state.redirects))
+
+    def preflight(self, state, output):
+        """Run the actual SDK preflight with state's fixed source and output receipt; return its original result.
+        以 state 固定源码及 output 回执运行真实 SDK preflight；返回原结果。
+        """
+        return release.publication_preflight(state.authority, state.source, "0.6.1")
+
+    def test_root_preflight_and_nonempty_request_guards(self):
+        """Accept one real-opener HTTP201 despite metadata push false, preserving authenticated GET/binary routes.
+        即使元数据 push 为 false 也接受真实 opener HTTP201，保留已认证 GET／二进制路由。
+        """
+        with self.transport() as state, tempfile.TemporaryDirectory(prefix="ls-blob-") as temporary:
+            self.preflight(state, Path(temporary) / "receipt.json")
+            self.assertTrue(state.redirects)
+            self.assertEqual(state.requests[0].full_url, state.base)
+            self.assertEqual(state.requests[0].get_method(), "GET")
+            self.assertEqual(state.requests[0].get_header("Authorization"), "Bearer fixture-only")
+            # Posts and request are actual transport observations, never inferred from YAML permissions.
+            # posts 及 request 为实际传输观察，绝非从 YAML 权限推断。
+            posts = [request for request in state.requests if request.get_method() == "POST"]
+            self.assertEqual(len(posts), 1)
+            request = posts[0]
+            self.assertEqual(request.get_header("Authorization"), "Bearer fixture-only")
+            self.assertEqual(request.get_header("Accept"), "application/vnd.github+json")
+            self.assertEqual(request.get_header("Content-type"), "application/json")
+            self.assertEqual(request.get_header("X-github-api-version"), "2022-11-28")
+            self.assertEqual(request.timeout, 60)
+            # Http is the original Core instance; the nonempty binary release endpoint keeps its existing Accept and bytes.
+            # http 为原 Core 实例；非空二进制 release 端点保留既有 Accept 及字节。
+            http = state.authority.Http()
+            self.assertEqual(http.get(state.base + "/releases/assets/7", binary=True)[0], b"unchanged binary asset")
+            self.assertEqual(state.requests[-1].get_header("Accept"), "application/octet-stream")
+            # Completion uses exactly the same gate; only its unrelated local Git-source check is isolated.
+            # completion 使用完全相同门禁；仅隔离其无关本地 Git 源码检查。
+            coordinator = release.publication_coordinator()
+            with patch.object(coordinator, "checked_source"):
+                result = coordinator.current_intent("publish", state.source, state.authority)
+            self.assertEqual(result["source_sha"], state.source)
+            self.assertEqual(sum(request.get_method() == "POST" for request in state.requests), 2)
+
+    def test_existing_blob_write_rejections_preserve_original_gates(self):
+        """Reject status/identity/token/source/workflow/tag errors through real preflight before downstream publication.
+        通过真实 preflight 在下游发布前拒绝状态／身份／令牌／源码／工作流／标签错误。
+        """
+        # Cases select one exact altered fact and expected write count; no retries or alternate endpoints exist.
+        # cases 选择唯一变化事实及预期写入数；不存在重试或备用端点。
+        cases = ("forbidden", "not-created", "wrong-return-sha", "wrong-return-url", "redirected",
+                 "missing-token", "identity", "default-branch", "source", "workflow", "workflow-type", "workflow-encoding", "workflow-sha", "tag")
+        for case in cases:
+            with self.subTest(case=case), self.transport() as state, tempfile.TemporaryDirectory(prefix="ls-blob-") as temporary:
+                if case == "forbidden":
+                    state.status = 403
+                elif case == "not-created":
+                    state.status = 200
+                elif case == "wrong-return-sha":
+                    state.sha = "b" * 40
+                elif case == "wrong-return-url":
+                    state.blob_url = "https://api.github.com/repos/other/repo/git/blobs/" + state.oid
+                elif case == "redirected":
+                    state.response_url = "https://api.github.com/repos/other/repo/git/blobs"
+                elif case == "missing-token":
+                    os.environ["GH_TOKEN"] = ""
+                elif case == "identity":
+                    state.routes[state.base]["full_name"] = "other/repo"
+                elif case == "default-branch":
+                    state.routes[state.base]["default_branch"] = "other"
+                elif case == "source":
+                    state.routes[state.base + "/git/ref/heads/main"]["object"]["sha"] = "b" * 40
+                elif case == "workflow":
+                    state.routes[state.definition]["content"] = base64.b64encode(b"edited definition").decode()
+                elif case == "workflow-type":
+                    state.routes[state.definition]["type"] = "dir"
+                elif case == "workflow-encoding":
+                    state.routes[state.definition]["encoding"] = "none"
+                elif case == "workflow-sha":
+                    state.routes[state.definition]["sha"] = "b" * 40
+                else:
+                    state.routes[state.base + "/git/ref/tags/v0.6.1"]["object"]["sha"] = "b" * 40
+                # Output is a new local receipt; failed authorization must never manufacture successful evidence.
+                # output 为新本地回执；失败授权绝不能制造成功证据。
+                output = Path(temporary) / "rejected.json"
+                with self.assertRaises((ValueError, release.urllib.error.HTTPError)):
+                    self.preflight(state, output)
+                self.assertFalse(output.exists())
+                self.assertEqual(sum(request.get_method() == "POST" for request in state.requests),
+                                 1 if case in ("forbidden", "not-created", "wrong-return-sha", "wrong-return-url", "redirected") else 0)
+                if case in ("forbidden", "tag"):
+                    # Completion must share the same actual refusal, not a second metadata-only authority.
+                    # completion 必须共享相同实际拒绝，绝非第二个仅元数据权威。
+                    state.requests.clear()
+                    coordinator = release.publication_coordinator()
+                    with patch.object(coordinator, "checked_source"), \
+                            self.assertRaises((ValueError, release.urllib.error.HTTPError)):
+                        coordinator.current_intent("publish", state.source, state.authority)
+                    self.assertEqual(sum(request.get_method() == "POST" for request in state.requests),
+                                     1 if case == "forbidden" else 0)
 
 
 if __name__ == "__main__":

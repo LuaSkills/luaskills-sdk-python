@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import base64
 from email.parser import BytesParser
 import hashlib
 import importlib.util
@@ -37,6 +38,7 @@ import tarfile
 import tempfile
 import urllib.request
 import urllib.error
+import urllib.parse
 import venv
 import zipfile
 
@@ -256,24 +258,7 @@ def publication_preflight(authority, source_sha, version, artifacts=None):
     在修改前检查当前 SDK 标签及精确 PyPI 版本；artifacts 绑定现有包字节。
     """
     http = authority.Http()
-    repository = release_get(http, "")
-    require(repository["full_name"] == SDK_REPOSITORY and repository["permissions"]["push"] is True,
-            "The issuing GITHUB_TOKEN lacks the fixed SDK repository write permission")
-    # Only HTTP 404 establishes absence; network errors and authorization failures never do.
-    # 仅 HTTP 404 建立不存在事实；网络及授权失败绝不具有此含义。
-    opener = urllib.request.build_opener(authority.SafeRedirect())
-    headers = {"Accept": "application/json", "Authorization": "Bearer " + os.environ["GH_TOKEN"]}
-    tag_url = f"https://api.github.com/repos/{SDK_REPOSITORY}/git/ref/tags/v{version}"
-    try:
-        with opener.open(urllib.request.Request(tag_url, headers=headers), timeout=60) as response:
-            response.read()
-    except urllib.error.HTTPError as error:
-        error.close()
-        require(error.code == 404, "Cannot verify SDK tag publication preflight")
-    else:
-        # Nested annotated-tag failures are unknown identity, not absence of the original exact ref.
-        # 嵌套注解标签失败表示未知身份，不表示原精确引用不存在。
-        sdk_tag(http, "v" + version, source_sha)
+    repository_write_preflight(authority, source_sha, version, http)
     # Exact PyPI recovery is checked only with the tested artifact manifest in prepare_publish.
     # 仅在 prepare_publish 持有已测产物清单时检查精确 PyPI 恢复。
     if artifacts is not None:
@@ -664,6 +649,77 @@ def release_get(http, path):
     # 仓库根为精确无尾斜杠端点；非空 REST 路径保留原字节。
     url = f"https://api.github.com/repos/{SDK_REPOSITORY}" + ("" if path == "" else "/" + path)
     return http.json(url)
+
+
+def repository_write_preflight(authority, source_sha, version, http):
+    """Authenticate source_sha's existing workflow/version tag and POST its identical blob once using http; return repository.
+    认证 source_sha 的既有工作流／version 标签，并通过 http 仅 POST 一次相同 blob；返回仓库记录。
+    authority owns the original HTTP/body guards; publication and completion share this sole write gate.
+    authority 拥有原 HTTP／正文护栏；发布及 completion 共享此唯一写门禁。
+    """
+    require(bool(os.environ.get("GH_TOKEN")), "Current GH_TOKEN is required for the existing workflow write gate")
+    # Repository identity and its current default-branch source must be established before the one write.
+    # 唯一写入前必须建立仓库身份及其当前默认分支源码。
+    repository = release_get(http, "")
+    require(repository["full_name"] == SDK_REPOSITORY, "SDK repository identity differs from its issuing source")
+    require(os.environ["GITHUB_REF"] == "refs/heads/" + repository["default_branch"],
+            "Current publication requires the default branch")
+    reference = release_get(http, "git/ref/heads/" + urllib.parse.quote(repository["default_branch"], safe=""))
+    require(reference["object"]["type"] == "commit" and reference["object"]["sha"] == source_sha,
+            "Authority workflow/SDK must already be on the unchanged default branch")
+    # The GET is bound to the exact source commit and the sole production workflow path.
+    # GET 绑定精确源码提交及唯一生产工作流路径。
+    content = release_get(http, "contents/" + SDK_WORKFLOW + "?ref=" + source_sha)
+    # Body is the exact workflow in this checked SDK source, not bytes chosen by a candidate or caller.
+    # body 为此已核 SDK 源码中的精确工作流，绝非候选或调用者选定字节。
+    body = (Path(__file__).resolve().parents[2] / SDK_WORKFLOW).read_bytes()
+    require(content["type"] == "file" and content["encoding"] == "base64"
+            and base64.b64decode(content["content"]) == body, "Default branch SDK workflow/source is missing or differs")
+    # Git's blob header authenticates length and original bytes, not the metadata role permissions.push.
+    # Git blob 头认证长度及原字节，不使用元数据角色 permissions.push。
+    oid = hashlib.sha1(b"blob " + str(len(body)).encode("ascii") + b"\0" + body).hexdigest()
+    require(content["sha"] == oid, "Workflow contents Git blob SHA differs from exact local bytes")
+    # Preserve the original exact version tag check before any write, shared by publication and completion.
+    # 在任何写入前保留原精确版本标签校验，由发布及 completion 共同使用。
+    tag_url = f"https://api.github.com/repos/{SDK_REPOSITORY}/git/ref/tags/v{version}"
+    # Tag headers preserve the original authenticated JSON media for the immutable-reference check.
+    # tag_headers 保留原不可变引用校验的已认证 JSON 媒体。
+    tag_headers = {"Accept": "application/json", "Authorization": "Bearer " + os.environ["GH_TOKEN"]}
+    try:
+        with http.opener.open(urllib.request.Request(tag_url, headers=tag_headers), timeout=60) as response:
+            response.read()
+    except urllib.error.HTTPError as error:
+        error.close()
+        require(error.code == 404, "Cannot verify SDK tag publication preflight")
+    else:
+        # Existing annotation errors remain unknown identity, never absence that permits the blob write.
+        # 既有附注错误仍为未知身份，绝非允许 blob 写入的标签不存在。
+        sdk_tag(http, "v" + version, source_sha)
+    # The precise endpoint accepts only the existing byte sequence; no tree/commit/ref/tag is created.
+    # 精确端点仅接收既有字节序列；不创建 tree／commit／ref／tag。
+    url = f"https://api.github.com/repos/{SDK_REPOSITORY}/git/blobs"
+    # Headers use only current GH_TOKEN; payload re-encodes existing bytes; request binds the one POST.
+    # headers 仅使用当前 GH_TOKEN；payload 重新编码既有字节；request 绑定唯一 POST。
+    headers = {"Accept": "application/vnd.github+json", "Content-Type": "application/json",
+               "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "LuaSkills-publication-prerequisites",
+               "Cache-Control": "no-cache", "Authorization": "Bearer " + os.environ["GH_TOKEN"]}
+    payload = json.dumps({"content": base64.b64encode(body).decode("ascii"), "encoding": "base64"}).encode("utf-8")
+    request = urllib.request.Request(url, data=payload, headers=headers, method="POST")
+    # Reuse this very Core HTTP opener so redirects, credential removal and HTTPS restrictions stay authoritative.
+    # 复用此同一 Core HTTP opener，使重定向、凭据移除及 HTTPS 限制保持权威。
+    with http.opener.open(request, timeout=60) as response:
+        require(response.status == 201 and response.geturl() == url,
+                "Existing workflow write must return HTTP 201 from the original blob URL")
+        # Result_body is bounded by the unchanged Core response limit before any JSON decoding.
+        # result_body 在任何 JSON 解码前受不变 Core 响应边界限制。
+        result_body = response.read(authority.MAX_BODY_BYTES + 1)
+        require(len(result_body) <= authority.MAX_BODY_BYTES, "Publication body exceeds the download limit")
+    # The strict Core decoder and exact returned URL/OID bind acceptance to the previously authenticated blob.
+    # 严格 Core 解码器及精确返回 URL／OID 将验收绑定到此前认证 blob。
+    result = authority.candidate.decode_json(result_body)
+    require(result["sha"] == oid and result["url"] == url + "/" + oid,
+            "Existing workflow write returned a different Git blob identity")
+    return repository
 
 
 def sdk_tag(http, tag, source_sha):
