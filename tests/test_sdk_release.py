@@ -1084,5 +1084,132 @@ class CoreProofSelectionTests(unittest.TestCase):
                 coordinator.core_proof_members(root / "prerequisites.json", shared)
 
 
+class ArtifactMediaTests(unittest.TestCase):
+    """Exercise the SDK adapter through real Core HTTP Requests and artifact byte validation offline.
+    离线通过真实 Core HTTP Request 及制品字节验证测试 SDK 适配器。
+    """
+
+    def test_bound_archive_media_and_original_core_byte_guards(self):
+        """Prove original 415, exact bound-media repair and retained byte/endpoint guards; return nothing.
+        证明原 415、精确绑定媒体修复及字节／端点护栏保留；无返回值。
+        """
+        # Standard-library fixtures replace only network I/O, never Core get/download or SDK media decisions.
+        # 标准库夹具仅替换网络 I/O，绝不替换 Core get/download 或 SDK 媒体决策。
+        import hashlib
+        import urllib.error
+        import zipfile
+        # Load the explicit Core authority and adjacent SDK production module, never a copied implementation.
+        # 加载明确 Core 权威及相邻 SDK 正式模块，绝不加载复制实现。
+        root = Path(os.environ["SDK_RELEASE_TEST_CORE_ROOT"]).resolve(strict=True)
+        sys.path.insert(0, str(root / "scripts/release"))
+        import sdk_prerequisites as shared
+        import sdk_recovery as recovery
+        specification = importlib.util.spec_from_file_location("artifact_media_publication", ROOT / "scripts/release/sdk_publication.py")
+        publication = importlib.util.module_from_spec(specification)
+        specification.loader.exec_module(publication)
+        wrapper = publication.ArtifactHttp
+        self.assertEqual(Path(shared.__file__).resolve(), root / "scripts/release/sdk_prerequisites.py")
+        # Offline identities are explicit fixture values and make no official signing claim.
+        # 离线身份为明确夹具值，不声称官方签名。
+        endpoint = "https://api.github.com/repos/test/repo/actions/artifacts/77"
+        archive_url = endpoint + "/zip"
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            archive.writestr("original.txt", b"original ZIP bytes")
+        # Actual ZIP bytes are consumed by the unmodified Core digest/size/unpack implementation.
+        # 实际 ZIP 字节由未修改 Core 的摘要／大小／解包实现消费。
+        content = buffer.getvalue()
+        metadata = {"id": 77, "name": recovery.candidate_artifact_name(123, 1), "expired": False,
+                    "workflow_run": {"id": 123, "head_sha": "a" * 40}, "size_in_bytes": len(content),
+                    "digest": "sha256:" + hashlib.sha256(content).hexdigest()}
+        arguments = dict(repository="test/repo", source_sha="a" * 40, run_id=123, artifact_id=77,
+                         artifact_name=metadata["name"])
+        # Exact unrelated routes expose accidental broader binary rewrites without probing a real network.
+        # 精确无关路由暴露意外宽泛二进制改写，不探测真实网络。
+        others = ("https://api.github.com/repos/test/repo/actions/artifacts/78/zip",
+                  archive_url + "?part=1", "https://example.invalid/native.dll")
+        routes = {archive_url: content, **{url: b"unrelated bytes" for url in others}}
+        requests, reads = [], []
+
+        class Response(io.BytesIO):
+            """Retain byte-body fixture semantics while observing the real Core bounded read.
+            保留字节正文夹具语义，同时观察真实 Core 有界读取。
+            """
+
+            def read(self, size=-1):
+                """Record requested size and return original fixture bytes without altering the body.
+                记录请求 size 并返回原夹具字节，不改变正文。
+                """
+                reads.append(size)
+                return super().read(size)
+
+        class Opener:
+            """Serve declared routes and reject the bound ZIP's octet Accept with the original 415.
+            提供已声明路由，并对绑定 ZIP 的 octet Accept 返回原 415。
+            """
+
+            def open(self, request, timeout):
+                """Observe the real Request and timeout; return body or the explicit media rejection.
+                观察真实 Request 及 timeout；返回正文或明确媒体拒绝。
+                """
+                # Store only safe URL/media/timeout facts, never the Request's authorization header.
+                # 仅保存安全 URL／媒体／超时事实，绝不保存 Request 的授权头。
+                accept = request.get_header("Accept")
+                requests.append((request.full_url, accept, timeout))
+                if request.full_url == archive_url and accept != "application/json":
+                    raise urllib.error.HTTPError(request.full_url, 415, "Unsupported Accept", {}, io.BytesIO())
+                # Metadata JSON encoding belongs only to its declared API route, not the ZIP body.
+                # 元数据 JSON 编码仅属于已声明 API 路由，不属于 ZIP 正文。
+                body = json.dumps(metadata).encode() if request.full_url == endpoint else routes[request.full_url]
+                response = Response(body)
+                response.status = 200
+                response.headers = {"Content-Type": "application/json" if request.full_url == endpoint else "application/zip"}
+                return response
+
+        # The same real Core instance retains its original get/json implementations and bounded reads.
+        # 同一真实 Core 实例保留原 get/json 实现及有界读取。
+        http = shared.Http()
+        opener = Opener()
+        http.opener = opener
+        with self.assertRaisesRegex(ValueError, "status 415"):
+            recovery.download_artifact(http, **arguments)
+        self.assertEqual(requests[-1], (archive_url, "application/octet-stream", 60))
+        # Only the SDK wrapper changes bound media; Core still authenticates the ZIP digest/size and members.
+        # 仅 SDK 包装改变绑定媒体；Core 仍认证 ZIP 摘要／大小及成员。
+        adapted = wrapper(http, "test/repo", 77)
+        evidence, files = recovery.download_artifact(adapted, **arguments)
+        self.assertEqual(files, {"original.txt": b"original ZIP bytes"})
+        self.assertEqual(evidence["archive_sha256"], hashlib.sha256(content).hexdigest())
+        self.assertEqual(requests[-1], (archive_url, "application/json", 60))
+        self.assertIs(http.opener, opener)
+        self.assertEqual(adapted.json(endpoint), metadata)
+        self.assertEqual(requests[-1], (endpoint, "application/json", 60))
+        for url in others:
+            with self.subTest(url=url):
+                self.assertEqual(adapted.get(url, binary=True)[0], b"unrelated bytes")
+                self.assertEqual(requests[-1], (url, "application/octet-stream", 60))
+                self.assertEqual(adapted.get(url, binary=False)[0], b"unrelated bytes")
+                self.assertEqual(requests[-1], (url, "application/json", 60))
+        self.assertEqual(adapted.get(archive_url, binary=False)[0], content)
+        # Wrong API size or digest must still fail inside real Core before its artifact members are accepted.
+        # 错误 API 大小或摘要仍须在真实 Core 内失败，之后才可能接受制品成员。
+        for field, changed in (("size_in_bytes", len(content) + 1), ("digest", "sha256:" + "0" * 64)):
+            with self.subTest(field=field):
+                original = metadata[field]
+                metadata[field] = changed
+                with self.assertRaisesRegex(ValueError, "downloaded bytes differ"):
+                    recovery.download_artifact(adapted, **arguments)
+                metadata[field] = original
+        # Even correctly sized/hashed JSON cannot replace ZIP: real Core's ZIP parser rejects it.
+        # 即使大小／摘要正确，JSON 也不能替代 ZIP：真实 Core ZIP 解析器拒绝它。
+        routes[archive_url] = b"{}"
+        metadata["size_in_bytes"] = len(routes[archive_url])
+        metadata["digest"] = "sha256:" + hashlib.sha256(routes[archive_url]).hexdigest()
+        with self.assertRaises((ValueError, zipfile.BadZipFile)):
+            recovery.download_artifact(adapted, **arguments)
+        self.assertTrue(reads)
+        self.assertTrue(all(size == shared.MAX_BODY_BYTES + 1 for size in reads))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -12,6 +12,39 @@ import tempfile
 import zipfile
 
 
+class ArtifactHttp:
+    """Adapt only an explicitly bound Actions artifact ZIP's Accept using the original Core HTTP instance.
+    仅使用原 Core HTTP 实例适配明确绑定 Actions 制品 ZIP 的 Accept。
+    """
+
+    def __init__(self, http, repository, artifact_id):
+        """Retain http and bind repository/artifact_id to one exact ZIP URL; return no value.
+        保留 http 并将 repository/artifact_id 绑定到唯一精确 ZIP URL；无返回值。
+        Core download_artifact validates these explicit identities before any request.
+        Core download_artifact 在任何请求前验证这些明确身份。
+        """
+        # The same Core instance retains its opener, credentials, HTTPS rules and body limit.
+        # 同一 Core 实例保留其 opener、凭据、HTTPS 规则及正文界限。
+        self.http = http
+        # GitHub's Actions ZIP endpoint requires JSON Accept even though the redirected body is ZIP bytes.
+        # GitHub Actions ZIP 端点要求 JSON Accept，尽管重定向后的正文是 ZIP 字节。
+        self.archive_url = f"https://api.github.com/repos/{repository}/actions/artifacts/{artifact_id}/zip"
+
+    def json(self, url):
+        """Delegate url's JSON read and decoding to the same Core HTTP; return its object unchanged.
+        将 url 的 JSON 读取及解码委托同一 Core HTTP；原样返回其对象。
+        """
+        return self.http.json(url)
+
+    def get(self, url, binary=False):
+        """Read url with binary's original media except the bound ZIP; return original bytes/headers.
+        按 binary 原媒体读取 url，仅绑定 ZIP 例外；返回原字节／响应头。
+        """
+        # Core's binary flag only chooses Accept; false still returns bounded raw bytes without JSON decoding.
+        # Core 的 binary 标志仅选择 Accept；false 仍返回有界原字节，不作 JSON 解码。
+        return self.http.get(url, binary=False if url == self.archive_url and binary is True else binary)
+
+
 class Publication:
     """Use release_api's existing gates to authenticate and complete immutable candidates; methods return evidence.
     使用 release_api 的已有门禁认证并完成不可变候选；方法返回凭据。
@@ -278,7 +311,7 @@ class Publication:
         self.api.require(args.source_sha == os.environ["GITHUB_SHA"] == os.environ["GITHUB_WORKFLOW_SHA"],
                          "First-version recovery requires identical SDK and completion source SHA")
         self.checked_source(args.source_sha)
-        artifact, files = recovery.download_artifact(authority.Http(), repository=self.api.SDK_REPOSITORY,
+        artifact, files = recovery.download_artifact(ArtifactHttp(authority.Http(), self.api.SDK_REPOSITORY, args.candidate_artifact_id), repository=self.api.SDK_REPOSITORY,
             source_sha=args.source_sha, run_id=args.candidate_run_id, artifact_id=args.candidate_artifact_id,
             artifact_name=recovery.candidate_artifact_name(args.candidate_run_id, args.candidate_run_attempt))
         args.output.mkdir(parents=True, exist_ok=False)
