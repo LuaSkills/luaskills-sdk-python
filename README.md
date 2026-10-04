@@ -6,7 +6,7 @@ Main LuaSkills repository: [LuaSkills/luaskills](https://github.com/LuaSkills/lu
 
 Python SDK for integrating the LuaSkills runtime through the public JSON FFI surface.
 
-This Python SDK source targets the `0.6.2` release line independently of LuaSkills core `0.6.1`; publication and artifact verification follow the release workflow. It retains the strict package-level skill configuration contract and defaults runtime assets to LuaSkills core `v0.6.1`, vldb-controller `v0.2.3`, and vldb-sqlite `v0.1.6`.
+This Python SDK source targets the `0.6.3` release line independently of LuaSkills core `0.6.1`; publication and artifact verification follow the release workflow. It retains the strict package-level skill configuration contract and defaults runtime assets to LuaSkills core `v0.6.1`, vldb-controller `v0.2.3`, and vldb-sqlite `v0.1.6`.
 
 The SDK wraps native library loading, JSON FFI buffers, engine lifecycle, formal skill roots, authority-aware management calls, skill config, provider callbacks, host-tool callbacks, and runtime asset installation. Hosts should not need to hand-write low-level FFI buffers or JSON envelopes for normal integration.
 
@@ -46,6 +46,8 @@ Supported targets are `all`, `luaskills`, `lua`, and `vldb`. VLDB presets are `n
 ```text
 runtime_root/resources/luaskills-sdk-runtime-manifest.json
 ```
+
+SDK `0.6.3` validates original archive member names and rechecks tar paths and link targets against already extracted entries before each member is extracted. It rejects parent components in member names, absolute or escaping targets, and hardlinks without an earlier regular file or regular hardlink chain. Safe relative symlinks and regular hardlink chains remain supported, subject to operating-system link permissions, and standard tar extraction retains directory metadata. This protection supports Python `>=3.10` and does not rely on a newer interpreter's default extraction filter.
 
 Supported database modes:
 
@@ -109,7 +111,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/deps/fetch_managed_r
 python scripts/debug-tools/managed_runtime_layout_check.py D:\VulcanCodeData\luaskills --distribution-root D:\VulcanCode\dependencies\runtimes --environment-root D:\VulcanCodeData\managed-runtime-envs
 ```
 
-Python SDK `0.6.2` pins LuaSkills core to the independently versioned `v0.6.1` and resolves runtime packages from the compatible `0.1` series by selecting the newest published patch automatically.
+Python SDK `0.6.3` pins LuaSkills core to the independently versioned `v0.6.1` and resolves runtime packages from the compatible `0.1` series by selecting the newest published patch automatically.
 
 ## Version Alignment
 

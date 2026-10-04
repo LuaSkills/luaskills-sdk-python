@@ -9,3 +9,4 @@ include tests/test_embedded_json_vectors.py
 include tests/test_embedded_compatibility.py
 include tests/test_embedded_transport.py
 include tests/test_embedded_example_native_startup.py
+include tests/test_embedded_runtime_archive_member_order.py

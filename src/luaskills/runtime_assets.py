@@ -13,13 +13,14 @@ import base64
 import re
 import subprocess
 import shutil
+import stat
 import tarfile
 import tempfile
 import urllib.request
 import zipfile
 from enum import Enum
 from pathlib import Path, PureWindowsPath
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 
 from .roots import normalized_path
 
@@ -1122,7 +1123,11 @@ def extract_archive(archive_path: Path, destination: Path) -> None:
         return
     with tarfile.open(archive_path) as archive:
         validate_tar_members(destination, archive)
-        archive.extractall(destination)
+        # Resume the iterator only after the previous member has actually been extracted.
+        # 仅在前一个成员实际提取后继续迭代器。
+        # This checks live link aliases on Python 3.10 too, while extractall retains deferred directory metadata.
+        # 此方式在 Python 三点十同样检查实际链接别名，同时由 extractall 保留延后目录元数据处理。
+        archive.extractall(destination, members=validated_tar_members(destination, archive))
 
 
 def validate_zip_members(destination: Path, archive: zipfile.ZipFile) -> None:
@@ -1137,17 +1142,92 @@ def validate_zip_members(destination: Path, archive: zipfile.ZipFile) -> None:
 
 def validate_tar_members(destination: Path, archive: tarfile.TarFile) -> None:
     """
-    Validate that every tar member and link target stays inside the destination directory.
-    校验每个 tar 成员及其链接目标都保持在目标目录内部。
+    Preflight archive members and targets without requiring not-yet-extracted physical hardlink targets.
+    预检归档成员及目标，不要求尚未提取的物理硬链接目标已存在。
+    Destination is the private extraction root; archive supplies original ordered members; return None or reject.
+    destination 是私有提取根；archive 提供原有序成员；返回空值或拒绝。
     """
 
+    # Match standard tar backward lookup: only the last normalized name before this member is authoritative.
+    # 匹配标准 tar 向后查找：只有当前成员之前最后一个规范化名称是权威来源。
+    prior_members: dict[str, tuple[tarfile.TarInfo, ...]] = {}
     for member in archive.getmembers():
-        validate_tar_member_type(member)
-        validate_archive_member_path(destination, member.name)
-        if member.issym():
-            validate_archive_symlink_target(destination, member.name, member.linkname)
-        if member.islnk():
-            validate_archive_member_path(destination, member.linkname)
+        prior_members[os.path.normpath(member.name)] = validate_tar_member(
+            destination, member, prior_members, extracting=False
+        )
+
+
+def validated_tar_members(destination: Path, archive: tarfile.TarFile) -> Iterator[tarfile.TarInfo]:
+    """
+    Revalidate each original member against already extracted links immediately before yielding it.
+    在交出每个原成员前，立即对照已经提取的链接重新校验。
+    Destination and archive bind the extraction root and original sequence; yield validated TarInfo objects.
+    destination、archive 绑定提取根及原序列；产出已校验 TarInfo 对象。
+    """
+
+    # Keep the same predecessor-name authority as preflight; no future entry can authorize a hardlink fallback.
+    # 保持与预检相同的先前名称权威；后续成员不能授权硬链接回退。
+    prior_members: dict[str, tuple[tarfile.TarInfo, ...]] = {}
+    for member in archive.getmembers():
+        # Capture the original reference chain now; later duplicate names must not replace older references.
+        # 此时捕获原引用链；后续重复名称不得替换更早的引用。
+        reference_chain = validate_tar_member(destination, member, prior_members, extracting=True)
+        yield member
+        prior_members[os.path.normpath(member.name)] = reference_chain
+
+
+def validate_tar_member(
+    destination: Path,
+    member: tarfile.TarInfo,
+    prior_members: dict[str, tuple[tarfile.TarInfo, ...]],
+    *,
+    extracting: bool,
+) -> tuple[tarfile.TarInfo, ...]:
+    """
+    Validate one original member using prior archive names and, during extraction, the actual target type.
+    用先前归档名称校验单个原成员，并在提取时检查实际目标类型。
+    Destination/member identify the root and current entry; prior_members retains each previously selected chain.
+    destination、member 标识根及当前成员；prior_members 保留每个先前选定的引用链。
+    Extracting enables live lstat checks for every potentially recursive hardlink target.
+    extracting 启用每个可能递归硬链接目标的实际 lstat 检查。
+    Return the immutable original reference chain when safe; reject before standard-library extraction.
+    安全时返回不可变的原引用链；在标准库提取前拒绝不安全成员。
+    """
+
+    validate_tar_member_type(member)
+    validate_archive_member_path(destination, member.name)
+    if member.issym():
+        validate_archive_symlink_target(destination, member.name, member.linkname)
+    if member.islnk():
+        validate_archive_member_path(destination, member.linkname)
+        # A failed os.link may re-extract this prior TarInfo at the hardlink's new location.
+        # os.link 失败可能在硬链接的新位置重新提取此先前 TarInfo。
+        # Retain the chain selected before this member; every nested fallback must end at the original regular entry.
+        # 保留当前成员之前选定的链；每层回退必须终止于原常规成员。
+        original_target = prior_members.get(os.path.normpath(member.linkname))
+        if original_target is None or not original_target[-1].isfile():
+            raise ValueError(f"hardlink target must be a prior regular file or regular hardlink chain: {member.linkname}")
+        # Check each os.link target that the standard library can reach through its original fallback chain.
+        # 检查标准库沿原回退链可能触及的每个 os.link 目标。
+        for linked_member in (member, *original_target[:-1]):
+            validate_archive_member_path(destination, linked_member.linkname)
+            # The current name may have been overwritten, but this lookup only checks current type, not old identity.
+            # 当前名称可能已经覆盖；此查找仅检查当前类型，不替换旧身份。
+            current_target = prior_members.get(os.path.normpath(linked_member.linkname))
+            if current_target is None or not current_target[-1].isfile():
+                raise ValueError(f"hardlink fallback target is no longer a regular file: {linked_member.linkname}")
+            if extracting:
+                # Inspect each actual entry itself rather than following a symbolic link before nested os.link.
+                # 在嵌套 os.link 前检查每个实际条目自身，不跟随符号链接。
+                target = destination / linked_member.linkname
+                try:
+                    target_mode = target.lstat().st_mode
+                except FileNotFoundError as error:
+                    raise ValueError(f"hardlink target is not an extracted regular file: {linked_member.linkname}") from error
+                if not stat.S_ISREG(target_mode):
+                    raise ValueError(f"hardlink target is not an extracted regular file: {linked_member.linkname}")
+        return (member, *original_target)
+    return (member,)
 
 
 def validate_tar_member_type(member: tarfile.TarInfo) -> None:
@@ -1169,23 +1249,44 @@ def validate_archive_symlink_target(destination: Path, member_name: str, link_na
 
     link_path = Path(link_name)
     if link_path.is_absolute():
-        validate_archive_member_path(destination, link_name)
+        validate_archive_resolved_path(destination, link_name)
         return
-    validate_archive_member_path(destination, str(Path(member_name).parent / link_path))
+    # A lawful symlink may use .. relative to its own parent; unlike member names, only its live bound is checked.
+    # 合法符号链接可相对自身父目录使用 ..；与成员名称不同，此处仅检查其实际边界。
+    validate_archive_resolved_path(destination, str(Path(member_name).parent / link_path))
 
 
 def validate_archive_member_path(destination: Path, member_name: str) -> None:
     """
-    Reject archive members whose resolved extraction path escapes the destination.
-    拒绝解析后解压路径逃逸目标目录的归档成员。
+    Reject raw parent components and archive members whose live resolved path escapes the destination.
+    拒绝原始父组件及实际解析路径逃逸目标目录的归档成员。
+    Destination is the extraction root and member_name is an original archive name; return None or raise ValueError.
+    destination 是提取根，member_name 是原归档名称；安全时返回 None，不安全时抛出 ValueError。
     """
 
-    if not member_name or "\x00" in member_name or Path(member_name).is_absolute() or PureWindowsPath(member_name).is_absolute():
-        raise ValueError(f"unsafe archive member path: {member_name}")
-    resolved_destination = destination.resolve()
-    resolved_member_path = (resolved_destination / member_name).resolve()
-    if resolved_member_path != resolved_destination and resolved_destination not in resolved_member_path.parents:
+    # Reject raw parent components before normalization or earlier links can change their meaning.
+    # 在规范化或先前链接改变含义之前拒绝原始父组件。
+    if ".." in member_name.replace("\\", "/").split("/"):
         raise ValueError(f"archive member escapes extraction directory: {member_name}")
+    validate_archive_resolved_path(destination, member_name)
+
+
+def validate_archive_resolved_path(destination: Path, relative_name: str) -> None:
+    """
+    Check a relative member or parent-relative symlink expression against the current extraction root.
+    对照当前提取根检查相对成员或相对父目录的符号链接表达式。
+    Destination is the root and relative_name is the expression; return None or reject absolute/escaping paths.
+    destination 是根，relative_name 是表达式；返回空值或拒绝绝对、越界路径。
+    """
+
+    if not relative_name or "\x00" in relative_name or Path(relative_name).is_absolute() or PureWindowsPath(relative_name).is_absolute():
+        raise ValueError(f"unsafe archive member path: {relative_name}")
+    # Resolve against links already on disk instead of treating lexical normalization as a security boundary.
+    # 对照磁盘上已经存在的链接解析，不将词法规范化当成安全边界。
+    resolved_destination = destination.resolve()
+    resolved_member_path = (resolved_destination / relative_name).resolve()
+    if resolved_member_path != resolved_destination and resolved_destination not in resolved_member_path.parents:
+        raise ValueError(f"archive member escapes extraction directory: {relative_name}")
 
 
 def install_lua_runtime(runtime_root: Path, extract_directory: Path, asset: dict[str, Any]) -> None:

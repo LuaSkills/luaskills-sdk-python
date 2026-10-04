@@ -6,7 +6,7 @@ LuaSkills 主仓库：[LuaSkills/luaskills](https://github.com/LuaSkills/luaskil
 
 Python SDK，用于通过公共 JSON FFI 接入 LuaSkills 运行时。
 
-本 Python SDK 源码面向 `0.6.2` 发布线，独立绑定 LuaSkills core `0.6.1`；发布与资产验证遵循发布工作流。它沿用严格的技能包级配置契约，并将运行时资产默认值设为 LuaSkills core `v0.6.1`、vldb-controller `v0.2.3` 与 vldb-sqlite `v0.1.6`。
+本 Python SDK 源码面向 `0.6.3` 发布线，独立绑定 LuaSkills core `0.6.1`；发布与资产验证遵循发布工作流。它沿用严格的技能包级配置契约，并将运行时资产默认值设为 LuaSkills core `v0.6.1`、vldb-controller `v0.2.3` 与 vldb-sqlite `v0.1.6`。
 
 SDK 封装了原生动态库加载、JSON FFI buffer、engine 生命周期、正式 skill root、带权限语义的管理调用、skill config、provider callback、宿主工具 callback 与 runtime 资产安装。宿主在常规集成中不需要手写底层 FFI buffer 或 JSON 包络。
 
@@ -46,6 +46,8 @@ RUNTIME_ROOT=/opt/luaskills scripts/deps/sync_runtime_assets.sh all vldb-control
 ```text
 runtime_root/resources/luaskills-sdk-runtime-manifest.json
 ```
+
+SDK `0.6.3` 校验归档成员的原始名称，并在提取每个 tar 成员前，对照已经提取的条目重新检查路径及链接目标。成员名中的父组件、绝对或越界目标，以及没有先前常规文件或常规硬链接链来源的硬链接都会被拒绝。操作系统允许创建链接时，合法相对符号链接和常规硬链接链仍受支持；目录元数据继续由标准 tar 提取流程保留。这项保护支持 Python `>=3.10`，不依赖较新解释器的默认提取过滤器。
 
 支持的数据库模式：
 
@@ -109,7 +111,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/deps/fetch_managed_r
 python scripts/debug-tools/managed_runtime_layout_check.py D:\VulcanCodeData\luaskills --distribution-root D:\VulcanCode\dependencies\runtimes --environment-root D:\VulcanCodeData\managed-runtime-envs
 ```
 
-Python SDK `0.6.2` 默认固定到独立版本的 LuaSkills core `v0.6.1`，并从兼容的 `0.1` 协议线中自动解析最新已发布的 runtime packages patch 版本。
+Python SDK `0.6.3` 默认固定到独立版本的 LuaSkills core `v0.6.1`，并从兼容的 `0.1` 协议线中自动解析最新已发布的 runtime packages patch 版本。
 
 ## 版本对齐
 
