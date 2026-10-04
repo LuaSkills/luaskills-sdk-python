@@ -6,6 +6,7 @@ Python LuaSkills SDK 的运行时资产规划与安装辅助工具。
 from __future__ import annotations
 
 import hashlib
+import copy
 import json
 import os
 import platform
@@ -1172,7 +1173,16 @@ def validated_tar_members(destination: Path, archive: tarfile.TarFile) -> Iterat
         # Capture the original reference chain now; later duplicate names must not replace older references.
         # 此时捕获原引用链；后续重复名称不得替换更早的引用。
         reference_chain = validate_tar_member(destination, member, prior_members, extracting=True)
-        yield member
+        if os.name == 'nt' and member.issym():
+            # Supported Windows tarfile versions pass linkname unchanged to os.symlink, which needs native separators.
+            # 受支持的 Windows tarfile 版本将 linkname 原样交给 os.symlink，而该调用需要原生分隔符。
+            # Normalize only an extraction view, preserving original archive names and immutable reference authority.
+            # 仅规范化提取视图，保留原归档名称及不可变引用权威。
+            extraction_member = copy.copy(member)
+            extraction_member.linkname = member.linkname.replace('/', os.sep)
+            yield extraction_member
+        else:
+            yield member
         prior_members[os.path.normpath(member.name)] = reference_chain
 
 
@@ -1281,10 +1291,14 @@ def validate_archive_resolved_path(destination: Path, relative_name: str) -> Non
 
     if not relative_name or "\x00" in relative_name or Path(relative_name).is_absolute() or PureWindowsPath(relative_name).is_absolute():
         raise ValueError(f"unsafe archive member path: {relative_name}")
-    # Resolve against links already on disk instead of treating lexical normalization as a security boundary.
-    # 对照磁盘上已经存在的链接解析，不将词法规范化当成安全边界。
+    # Windows realpath normalizes a whole a/.. expression before dereferencing a; resolve a first instead.
+    # Windows realpath 在解引用 a 前规范化整个 a/.. 表达式；因此先解析 a。
+    # This also preserves lawful parent-relative targets while keeping one final root-bound comparison.
+    # 此方式也保留合法父目录相对目标，并维持唯一的最终根边界比较。
     resolved_destination = destination.resolve()
-    resolved_member_path = (resolved_destination / relative_name).resolve()
+    resolved_member_path = resolved_destination
+    for component in Path(relative_name).parts:
+        resolved_member_path = (resolved_member_path / component).resolve()
     if resolved_member_path != resolved_destination and resolved_destination not in resolved_member_path.parents:
         raise ValueError(f"archive member escapes extraction directory: {relative_name}")
 

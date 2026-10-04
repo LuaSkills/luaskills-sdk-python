@@ -288,6 +288,37 @@ class RuntimeArchiveMemberOrderTests(unittest.TestCase):
             self.assertTrue((root / 'extract' / 'alias').is_symlink())
             self.assertEqual((root / 'extract' / 'alias' / 'link').read_bytes(), b'original')
 
+    def test_extraction_symlink_separator_copy_preserves_archive_metadata(self) -> None:
+        """Normalize only the extraction symlink copy on Windows without modifying original archive metadata.
+        仅在 Windows 规范化提取符号链接副本，不修改原归档元数据。
+        """
+        with TemporaryDirectory() as temporary:
+            # Inspect the actual production iterator before OS extraction, so this regression needs no link privilege.
+            # 在系统提取前检查实际生产迭代器，因此此回归不需要链接权限。
+            root = Path(temporary)
+            filename = self.make_archive(root, [('file', 'file', b'original'), ('folder/link', 'symlink', '../file')])
+            with tarfile.open(filename) as archive:
+                # Keep the original TarInfo identity and its metadata independently of the yielded extraction view.
+                # 将原 TarInfo 身份及其元数据与交出的提取视图独立保存。
+                # Select the declared link by its archive name rather than a member position that could move.
+                # 按声明的归档名称选择链接，不绑定可能移动的成员位置。
+                original = archive.getmember('folder/link')
+                metadata = original.get_info()
+                members = validated_tar_members(root / 'extract', archive)
+                next(members)
+                extracted = next(members)
+                self.assertEqual(original.get_info(), metadata)
+                self.assertEqual(original.linkname, '../file')
+                self.assertEqual(extracted.name, original.name)
+                self.assertEqual(extracted.type, original.type)
+                self.assertEqual(extracted.mtime, original.mtime)
+                if os.name == 'nt':
+                    self.assertIsNot(extracted, original)
+                    self.assertEqual(extracted.linkname, '..' + os.sep + 'file')
+                else:
+                    self.assertIs(extracted, original)
+                    self.assertEqual(extracted.linkname, '../file')
+
 
 if __name__ == '__main__':
     unittest.main()
