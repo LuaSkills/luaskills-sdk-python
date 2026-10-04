@@ -337,6 +337,153 @@ class EmbeddedPumpIntegrationTests(EmbeddedNativeFixture, unittest.TestCase):
             self.assertTrue(any(effect["effects"] == "committed" for effect in done["host_effects"]))
         self.assertIsNone(self.pump.status["failure"])
 
+    def _exercise_invalid_completion_effect_snapshot(self, mode, result_kind):
+        """
+        Execute one real callback in mode with invalid/oversized result_kind and verify its returned effect snapshot.
+        以 mode 执行一个真实回调并返回非法或超限的 result_kind，验证返回时的副作用快照。
+        Return nothing after the real acknowledgement, mutator thread and pump ownership have drained.
+        真实确认、修改线程及事件泵所有权排空后无返回值。
+        """
+        # One deadline bounds both coordination waits without changing the native callback budget.
+        # 同一个期限约束两个协调等待，不改变原生回调预算。
+        wait_seconds = 5
+        # The encoding window proves that production has already captured the returned committed snapshot.
+        # 编码窗口证明生产方法已经捕获返回时的已提交快照。
+        encoding_entered = threading.Event()
+        late_reported = threading.Event()
+        # Retain the actual handler's context alias, separately from the core completion record.
+        # 保留实际处理器的上下文别名，与核心完成记录分别保存。
+        retained_context = None
+        # Actual request identities and encoding attempts expose replay or replacement-frame mistakes.
+        # 实际请求身份及编码次数暴露重放或替代帧错误。
+        handler_requests = []
+        encoding_observations = []
+        thread_errors = []
+        # Preserve the original bound production method; the wrapper only coordinates the first window.
+        # 保留原绑定生产方法；包装器仅协调首次窗口。
+        original_encode = self.pump._encode_completion
+
+        def handler(arguments, context):
+            """
+            Retain context, report committed and return the declared bad value; arguments carries no authority.
+            保留 context、报告已提交并返回声明的坏值；arguments 不携带权威。
+            Return an actual set or a string exceeding the owning transport's original encoding limit.
+            返回真实集合，或超过所属传输原编码上限的字符串。
+            """
+            nonlocal retained_context
+            retained_context = context
+            handler_requests.append(context.request_id)
+            context.report_effects("committed")
+            return {object()} if result_kind == "invalid" else "x" * self.transport.config.max_request_bytes
+
+        async def async_handler(arguments, context):
+            """
+            Invoke the same actual handler on the pump loop with arguments/context and return its bad value.
+            在泵循环以 arguments/context 调用同一实际处理器并返回其坏值。
+            """
+            return handler(arguments, context)
+
+        def mutate_after_return():
+            """
+            Wait for the original returned snapshot, then modify only the retained context alias on this thread.
+            等待原返回快照，随后仅在本线程修改保留的上下文别名。
+            Return nothing and retain any thread error for assertions on the test thread.
+            无返回值，将线程错误保留给测试线程断言。
+            """
+            try:
+                if not encoding_entered.wait(wait_seconds):
+                    raise TimeoutError("callback did not reach its original encoding window")
+                if retained_context is None:
+                    raise RuntimeError("actual returned callback context is unavailable")
+                retained_context.report_effects("rolled_back")
+            except BaseException as error:
+                thread_errors.append(error)
+            finally:
+                late_reported.set()
+
+        def encode_after_late_report(record):
+            """
+            Observe record's real outcome and release the mutator before calling the unchanged production encoder.
+            观察 record 的真实结果，释放修改线程后调用未修改的生产编码器。
+            Return original encoded bytes or its actual invalid/oversized-value exception without substitution.
+            返回原编码字节或其真实非法／超限异常，不提供替代结果。
+            """
+            if not encoding_entered.is_set():
+                self.assertTrue(record.outcome["ok"])
+                self.assertEqual(record.outcome["effects"], "committed")
+                encoding_entered.set()
+                self.assertTrue(late_reported.wait(wait_seconds))
+            encoding_observations.append((record.context.request_id, record.outcome["effects"]))
+            return original_encode(record)
+
+        # Each test method owns a fresh real registration/pool, preventing same-name generation cross-talk.
+        # 每个测试方法拥有全新的真实注册／池，避免同名代次串扰。
+        selected_handler = handler if mode == "sync" else async_handler
+        self.pump.register([self.capability(selected_handler, mode)], timeout=wait_seconds)
+        # This independent thread changes the public alias only after the actual handler has returned.
+        # 此独立线程仅在实际处理器返回后修改公开别名。
+        mutator = threading.Thread(target=mutate_after_return, name="callback-late-effects")
+        mutator.start()
+        try:
+            with patch.object(self.pump, "_encode_completion", side_effect=encode_after_late_report):
+                # Admission, Lua execution and acknowledgement all use the matching real Core DLL.
+                # 入场、Lua执行及确认均使用匹配的真实Core动态库。
+                done = self.terminal(self.submit(self.callback_pool(), result_kind))
+        finally:
+            encoding_entered.set()
+            mutator.join(wait_seconds)
+            self.pump.close(wait_seconds)
+        self.assertFalse(mutator.is_alive())
+        self.assertEqual(thread_errors, [])
+        self.assertEqual(retained_context.effects, "rolled_back")
+        self.assertEqual(handler_requests, [retained_context.request_id])
+        self.assertEqual(len(encoding_observations), 2)
+        self.assertEqual(done["phase"], "succeeded", done)
+        self.assertFalse(done["value"]["ok"])
+        self.assertEqual(done["value"]["error"], {"code": "execution_failed",
+            "message": "Python host callback produced an invalid or oversized result"})
+        # Find the original effect by identity, never by ledger order or a mutable array index.
+        # 按身份查找原副作用，不绑定账本顺序或可变数组下标。
+        effect = next(entry for entry in done["host_effects"] if entry["request_id"] == retained_context.request_id)
+        self.assertEqual(effect["registration_id"], retained_context.registration_id)
+        self.assertEqual(effect["phase"], "completed")
+        self.assertTrue(self.pump.status["closed"])
+        self.assertIsNone(self.pump.status["failure"])
+        self.assertEqual(self.pump.status["registration_ids"], ())
+        self.assertEqual(self.pump.status["request_ids"], ())
+        self.assertEqual(self.pump.status["pending_acknowledgements"], ())
+        self.assertEqual(self.pump.status["pending_commands"], 0)
+        self.assertIsNone(self.pump.status["pending_native_command"])
+        self.assertFalse(self.pump.status["recovery_required"])
+        # Both actual Lua return and the retained Core ledger must use the same original committed snapshot.
+        # 实际Lua返回与保留的Core账本必须使用同一个原始已提交快照。
+        self.assertEqual({"lua": done["value"]["effects"], "ledger": effect["effects"]},
+            {"lua": "committed", "ledger": "committed"}, (mode, result_kind, encoding_observations))
+
+    def test_sync_invalid_completion_keeps_returned_effect_snapshot(self):
+        """Verify one synchronous invalid-JSON callback retains its returned effects; return nothing.
+        验证一个同步非法JSON回调保留返回时副作用；无返回值。
+        """
+        self._exercise_invalid_completion_effect_snapshot("sync", "invalid")
+
+    def test_sync_oversized_completion_keeps_returned_effect_snapshot(self):
+        """Verify one synchronous oversized callback retains its returned effects; return nothing.
+        验证一个同步超限回调保留返回时副作用；无返回值。
+        """
+        self._exercise_invalid_completion_effect_snapshot("sync", "oversized")
+
+    def test_async_invalid_completion_keeps_returned_effect_snapshot(self):
+        """Verify one asynchronous invalid-JSON callback retains its returned effects; return nothing.
+        验证一个异步非法JSON回调保留返回时副作用；无返回值。
+        """
+        self._exercise_invalid_completion_effect_snapshot("async", "invalid")
+
+    def test_async_oversized_completion_keeps_returned_effect_snapshot(self):
+        """Verify one asynchronous oversized callback retains its returned effects; return nothing.
+        验证一个异步超限回调保留返回时副作用；无返回值。
+        """
+        self._exercise_invalid_completion_effect_snapshot("async", "oversized")
+
     def test_bounded_handlers_leave_queued_requests_cancellable_without_execution(self):
         """
         SDK handler capacity limits take size so a second queued callback can cancel before Python executes it.

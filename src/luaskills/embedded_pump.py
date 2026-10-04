@@ -545,8 +545,10 @@ class EmbeddedCallbackPump:
             try:
                 record.encoded_completion = self._encode_completion(record)
             except (TypeError, ValueError, OverflowError, UnicodeError, RecursionError):
+                # Preserve the returned snapshot; a retained context alias may report different effects after return.
+                # 保留返回时快照；保留的上下文别名可能在返回后报告不同副作用。
                 record.outcome = {"ok": False, "error": {"code": "execution_failed",
-                    "message": "Python host callback produced an invalid or oversized result"}, "effects": record.context.effects}
+                    "message": "Python host callback produced an invalid or oversized result"}, "effects": record.outcome["effects"]}
                 record.encoded_completion = self._encode_completion(record)
         except BaseException as error:
             record.acknowledgement_failed = True

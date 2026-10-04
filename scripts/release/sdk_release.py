@@ -427,6 +427,13 @@ if startup.countTestCases() < 10:
 suite = unittest.TestSuite()
 for pattern in ('test_embedded_native_e2e.py', 'test_embedded_json_vectors.py'):
     suite.addTests(unittest.defaultTestLoader.discover(sys.argv[1], pattern=pattern))
+# Exercise the real encoding-failure snapshot regressions against each installed wheel or rebuilt sdist.
+# 对每个已安装轮包或重建源码包执行真实编码失败快照回归。
+for mode in ('sync', 'async'):
+    for result_kind in ('invalid', 'oversized'):
+        suite.addTests(unittest.defaultTestLoader.loadTestsFromName(
+            'test_embedded_pump.EmbeddedPumpIntegrationTests.test_' + mode + '_' + result_kind
+            + '_completion_keeps_returned_effect_snapshot'))
 result = unittest.TextTestRunner(verbosity=2).run(suite)
 sys.exit(not result.wasSuccessful() or bool(result.skipped) or result.testsRun < 10)
 """
