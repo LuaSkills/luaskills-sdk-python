@@ -23,6 +23,14 @@ from .ffi import FfiBorrowedBuffer, resolve_library_path
 EMBEDDED_CONTROL_WORKERS = 1
 
 
+# Strong owners remain reachable through construction interruption until explicit native free.
+# 强所有者跨构造中断保持可达，直到显式原生释放。
+_LIVE_TRANSPORTS: dict[int, "EmbeddedTransport"] = {}
+# This lock protects only table operations; it never surrounds native calls or owner-lock acquisition.
+# 此锁仅保护表操作；绝不包围原生调用或所有者锁获取。
+_LIVE_TRANSPORTS_LOCK = threading.Lock()
+
+
 class EmbeddedTransportError(RuntimeError):
     """
     Preserve the native function name and integer status for a failed transport operation.
@@ -209,6 +217,9 @@ class EmbeddedTransport:
         # Actual Python calls, including decoding and result release, that forbid local free.
         # 阻止局部释放的实际 Python 调用，包含解码与结果释放。
         self._active_calls = 0
+        # Constructor admission becomes true only while the original native creation call is active.
+        # 仅在原始原生创建调用活动期间，构造准入状态才为真。
+        self._constructing = False
         # Exact native results retained until their matching free succeeds, including explicit release errors.
         # 保留到匹配释放成功的精确原生结果，包含显式释放错误。
         self._results: dict[int, _NativeResult] = {}
@@ -224,9 +235,15 @@ class EmbeddedTransport:
         # Command executor slots reserved independently of callback pump executors.
         # 独立于回调泵执行器预留的命令执行器槽。
         self._command_slots = 0
-        # None only after actual native free has succeeded.
-        # 仅在实际原生释放成功后为 None。
-        self._transport_id: int | None = None
+        # The original uint64 output cell is the sole native identity authority.
+        # 原始 uint64 输出单元是唯一原生身份权威。
+        self._transport_identity = ctypes.c_uint64()
+        # An interrupted native free retains explicit uncertainty for one exact recovery attempt.
+        # 被中断的原生释放保留显式不确定状态，供一次精确恢复尝试使用。
+        self._free_uncertain = False
+        # Exact result identities whose native release may have completed before Python interruption.
+        # 原生释放可能在 Python 中断前已完成的精确结果身份。
+        self._uncertain_result_releases: set[int] = set()
         # Copy and validate borrowed metadata before the first constructor can publish a native handle.
         # 在首个构造函数可能发布原生句柄前，复制并校验借用元数据。
         self._description_bytes = self._read_description()
@@ -238,11 +255,61 @@ class EmbeddedTransport:
             protocol_version=EMBEDDED_PROTOCOL_VERSION,
             **{field.name: getattr(config, field.name) for field in fields(config)},
         )
-        # uint64 output preserves identities above JavaScript's and signed int64's ranges.
-        # uint64 输出保留超出 JavaScript 与有符号 int64 范围的身份。
-        identity = ctypes.c_uint64()
-        self._check("luaskills_ffi_embedded_transport_new_v1", self._new(ctypes.byref(native_config), ctypes.byref(identity)))
-        self._transport_id = identity.value
+        # Materialize pointer wrappers before publishing the recoverable owner.
+        # 发布可恢复所有者前先实体化指针包装。
+        config_pointer = ctypes.byref(native_config)
+        identity_pointer = ctypes.byref(self._transport_identity)
+        # Mark this one original call under the owner lock, then release the lock before native execution.
+        # 在所有者锁内标记这一次原始调用，随后在原生执行前释放该锁。
+        with self._lock:
+            self._constructing = True
+            self._active_calls += 1
+        try:
+            # Retain the fully bound owner, library and sole output cell before native publication.
+            # 在原生发布前保留完整绑定的所有者、动态库及唯一输出单元。
+            with _LIVE_TRANSPORTS_LOCK:
+                _LIVE_TRANSPORTS[id(self)] = self
+            # Pending Python interruption leaves this same owner reachable without an adoption copy.
+            # 待处理 Python 中断会让同一所有者保持可达，不存在接管副本。
+            status = self._new(config_pointer, identity_pointer)
+            self._check("luaskills_ffi_embedded_transport_new_v1", status)
+            if self._transport_identity.value == 0:
+                raise RuntimeError("embedded transport constructor returned a zero identity")
+        finally:
+            # End only the actual constructor call; the original cell needs no later identity copy.
+            # 仅结束实际构造调用；原始单元不需要随后复制身份。
+            with self._lock:
+                self._constructing = False
+                self._active_calls -= 1
+            # Zero proves no native owner was published, including interruption before native entry.
+            # 零值证明没有发布原生所有者，包含进入原生调用前发生的中断。
+            if self._transport_identity.value == 0:
+                with _LIVE_TRANSPORTS_LOCK:
+                    if _LIVE_TRANSPORTS.get(id(self)) is self:
+                        del _LIVE_TRANSPORTS[id(self)]
+                    elif id(self) in _LIVE_TRANSPORTS:
+                        raise RuntimeError("embedded transport live-owner identity is inconsistent")
+
+    @property
+    def _transport_id(self) -> int | None:
+        """
+        Read the original uint64 output and return None for zero without maintaining a second identity.
+        读取原始 uint64 输出，为零时返回 None，不维护第二份身份。
+        Internal callers acquire the owner lock before using the returned native identity.
+        内部调用方在使用返回的原生身份前获取所有者锁。
+        """
+        return self._transport_identity.value or None
+
+    @staticmethod
+    def live_transports() -> tuple[EmbeddedTransport, ...]:
+        """
+        Return a frozen snapshot of exact strong owners, including interrupted construction.
+        返回精确强所有者的冻结快照，包含被中断的构造。
+        The snapshot performs no native call and never proves publication, drainage or successful cleanup.
+        此快照不执行原生调用，也不证明发布、排空或清理成功。
+        """
+        with _LIVE_TRANSPORTS_LOCK:
+            return tuple(_LIVE_TRANSPORTS.values())
 
     @property
     def core_description(self) -> OutputCoreDescription:
@@ -325,6 +392,8 @@ class EmbeddedTransport:
         保留局部调用所有权并返回精确活动原生身份，或拒绝释放后使用。
         """
         with self._lock:
+            if self._constructing:
+                raise RuntimeError("embedded transport constructor is still active")
             if self._transport_id is None:
                 raise RuntimeError("embedded transport has been freed")
             self._active_calls += 1
@@ -408,11 +477,15 @@ class EmbeddedTransport:
                 if result.allocation_id != 0:
                     with self._lock:
                         self._results[result.allocation_id] = result
+                        self._uncertain_result_releases.add(result.allocation_id)
                     status = self._result_free(identity, result)
                     if status != EmbeddedNativeStatus.OK:
+                        with self._lock:
+                            self._uncertain_result_releases.remove(result.allocation_id)
                         raise EmbeddedResultReleaseError(status, response_bytes)
                     with self._lock:
                         del self._results[result.allocation_id]
+                        self._uncertain_result_releases.remove(result.allocation_id)
             finally:
                 self._end()
 
@@ -436,13 +509,24 @@ class EmbeddedTransport:
         仅重试结果释放失败后保留的精确描述符；任何调用方可能仍在读取时拒绝。
         """
         with self._lock:
+            if self._constructing:
+                raise RuntimeError("embedded transport constructor is still active")
             if self._active_calls:
                 raise RuntimeError("embedded transport still has active calls")
             if self._transport_id is None:
                 raise RuntimeError("embedded transport has been freed")
             for allocation_id, result in list(self._results.items()):
-                self._check("luaskills_ffi_embedded_result_free_v1", self._result_free(self._transport_id, result))
-                del self._results[allocation_id]
+                # A prior interruption authorizes only exact same-descriptor absence as completed release.
+                # 先前中断仅授权将精确同一描述符的缺失视为已完成释放。
+                recovering = allocation_id in self._uncertain_result_releases
+                self._uncertain_result_releases.add(allocation_id)
+                status = self._result_free(self._transport_id, result)
+                if status == EmbeddedNativeStatus.OK or (status == EmbeddedNativeStatus.NOT_FOUND and recovering):
+                    del self._results[allocation_id]
+                    self._uncertain_result_releases.remove(allocation_id)
+                    continue
+                self._uncertain_result_releases.remove(allocation_id)
+                self._check("luaskills_ffi_embedded_result_free_v1", status)
 
     def free(self) -> None:
         """
@@ -450,12 +534,28 @@ class EmbeddedTransport:
         仅在关闭及实际排空后移除原生所有权；失败后此对象仍可用于排空。
         """
         with self._lock:
+            if self._constructing:
+                raise RuntimeError("embedded transport constructor is still active")
             if self._transport_id is None:
                 raise RuntimeError("embedded transport has been freed")
             if self._active_calls or self._results or self._callback_pumps or self._runtime_scopes or self._command_driver is not None:
                 raise RuntimeError("embedded transport still owns active calls or results")
-            self._check("luaskills_ffi_embedded_transport_free_v1", self._free(self._transport_id))
-            self._transport_id = None
+            # Only a prior interrupted attempt may interpret exact native absence as completed release.
+            # 只有先前被中断的尝试可以把精确原生缺失解释为释放完成。
+            recovering = self._free_uncertain
+            self._free_uncertain = True
+            status = self._free(self._transport_id)
+            if status != EmbeddedNativeStatus.OK and not (status == EmbeddedNativeStatus.NOT_FOUND and recovering):
+                self._free_uncertain = False
+                self._check("luaskills_ffi_embedded_transport_free_v1", status)
+            # Remove the global recovery path only after actual success or proven interrupted success.
+            # 仅在实际成功或证实先前中断已成功后移除全局恢复路径。
+            with _LIVE_TRANSPORTS_LOCK:
+                if _LIVE_TRANSPORTS.get(id(self)) is not self:
+                    raise RuntimeError("embedded transport live-owner identity is inconsistent")
+                del _LIVE_TRANSPORTS[id(self)]
+            self._transport_identity.value = 0
+            self._free_uncertain = False
 
     def callback_pump(self, runtime_id: str) -> embedded_pump.EmbeddedCallbackPump | None:
         """
@@ -477,6 +577,8 @@ class EmbeddedTransport:
         在线程启动前为运行时保留一个精确泵所有者；这是 SDK 所有权，而非原生注册。
         """
         with self._lock:
+            if self._constructing:
+                raise RuntimeError("embedded transport constructor is still active")
             if self._transport_id is None:
                 raise RuntimeError("embedded transport has been freed")
             if runtime_id in self._callback_pumps:
@@ -496,6 +598,8 @@ class EmbeddedTransport:
         无返回值；重复所有权及原生释放后使用明确失败。
         """
         with self._lock:
+            if self._constructing:
+                raise RuntimeError("embedded transport constructor is still active")
             if self._transport_id is None:
                 raise RuntimeError("embedded transport has been freed")
             if self._command_driver is not None:
@@ -548,6 +652,8 @@ class EmbeddedTransport:
         仅在发布有界所有权后返回；拒绝重复所有权或遗漏活动事件泵。
         """
         with self._lock:
+            if self._constructing:
+                raise RuntimeError("embedded transport constructor is still active")
             if self._transport_id is None:
                 raise RuntimeError("embedded transport has been freed")
             if runtime_id in self._runtime_scopes:

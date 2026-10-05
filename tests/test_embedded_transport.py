@@ -15,7 +15,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
 
-from luaskills import EmbeddedCallbackPump, EmbeddedRuntimeError, EmbeddedTransport, EmbeddedTransportConfig, EmbeddedTransportError
+from luaskills import EmbeddedCallbackPump, EmbeddedNativeStatus, EmbeddedRuntimeError, EmbeddedTransport, EmbeddedTransportConfig, EmbeddedTransportError
 from luaskills.embedded_transport import _NativeConfig, _NativeResult
 from luaskills import embedded_contract as contract
 from luaskills.ffi import FfiBorrowedBuffer
@@ -113,6 +113,18 @@ class NativeLibrary:
         self.description_length = None
         self.description_null = False
         self.constructor_calls = 0
+        # Constructor controls distinguish publication, explicit rejection and interruption after publication.
+        # 构造控制区分发布、明确拒绝及发布后的中断。
+        self.constructor_status = EmbeddedNativeStatus.OK
+        self.publish_constructor_identity = True
+        self.interrupt_before_constructor_publication = False
+        self.interrupt_after_constructor_publication = False
+        self.reenter_during_constructor = False
+        self.constructor_reentry_errors: list[str] = []
+        # Release controls expose successful native mutation followed by Python interruption.
+        # 释放控制暴露原生变更成功后发生 Python 中断的边界。
+        self.interrupt_after_result_release = False
+        self.interrupt_after_transport_free = False
         self.luaskills_ffi_embedded_describe_v1 = NativeFunction(self.describe)
         self.luaskills_ffi_embedded_transport_new_v1 = NativeFunction(self.new)
         self.luaskills_ffi_embedded_transport_close_v1 = NativeFunction(self.close)
@@ -141,8 +153,22 @@ class NativeLibrary:
         assert native.struct_size == ctypes.sizeof(_NativeConfig)
         assert native.protocol_version == 1
         assert native.max_response_bytes == config().max_response_bytes
-        ctypes.cast(output, ctypes.POINTER(ctypes.c_uint64))[0] = self.identity
-        return 0
+        if self.interrupt_before_constructor_publication:
+            raise KeyboardInterrupt("injected interruption before native constructor publication")
+        if self.publish_constructor_identity:
+            ctypes.cast(output, ctypes.POINTER(ctypes.c_uint64))[0] = self.identity
+        if self.reenter_during_constructor:
+            # The live snapshot must expose the exact owner without taking its local lock.
+            # 存活快照必须暴露精确所有者，且不获取其局部锁。
+            owner = next(owner for owner in EmbeddedTransport.live_transports() if owner._library is self)
+            for operation in (owner.close, owner.free):
+                try:
+                    operation()
+                except RuntimeError as error:
+                    self.constructor_reentry_errors.append(str(error))
+        if self.interrupt_after_constructor_publication:
+            raise KeyboardInterrupt("injected interruption after native constructor publication")
+        return self.constructor_status
 
     def request(self, identity, borrowed, output):
         """
@@ -173,6 +199,8 @@ class NativeLibrary:
         拒绝被修改的描述符；精确释放成功前保留拥有内存。
         """
         assert identity == self.identity
+        if result.allocation_id not in self.allocations:
+            return EmbeddedNativeStatus.NOT_FOUND
         storage = self.allocations[result.allocation_id]
         assert result.len == len(storage)
         assert ctypes.addressof(storage) == ctypes.addressof(result.ptr.contents)
@@ -180,6 +208,8 @@ class NativeLibrary:
             return self.release_status
         self.released.append(result.allocation_id)
         del self.allocations[result.allocation_id]
+        if self.interrupt_after_result_release:
+            raise KeyboardInterrupt("injected interruption after native result release")
         return 0
 
     def close(self, identity):
@@ -197,9 +227,13 @@ class NativeLibrary:
         在显式关闭及全部原生结果所有权排空前报告忙碌。
         """
         assert identity == self.identity
+        if self.freed:
+            return EmbeddedNativeStatus.NOT_FOUND
         if not self.closed or self.allocations:
             return 3
         self.freed = True
+        if self.interrupt_after_transport_free:
+            raise KeyboardInterrupt("injected interruption after native transport free")
         return 0
 
 
@@ -242,6 +276,91 @@ class EmbeddedTransportTests(unittest.TestCase):
         self.assertEqual(self.native.received[-1]["command"]["value"], "中文\0🦥")
         self.assertEqual(self.native.released, [(1 << 63) + 101])
         self.assertFalse(self.native.allocations)
+
+    def test_constructor_interruption_retains_exact_owner_for_explicit_cleanup(self):
+        """
+        Retain the original owner and uint64 output when construction is interrupted after publication.
+        在发布后构造被中断时保留原始所有者及 uint64 输出。
+        Return nothing after the recovered exact owner is explicitly closed and freed.
+        显式关闭并释放恢复的精确所有者后无返回值。
+        """
+        # A separate native source isolates the interrupted owner from this test fixture's normal transport.
+        # 独立原生来源将被中断所有者与本测试夹具的正常传输隔离。
+        native = NativeLibrary()
+        native.interrupt_after_constructor_publication = True
+        before = EmbeddedTransport.live_transports()
+        with patch("luaskills.embedded_transport.ctypes.CDLL", return_value=native):
+            with self.assertRaises(KeyboardInterrupt):
+                EmbeddedTransport(config(), library_path=Path(__file__))
+        recovered = tuple(owner for owner in EmbeddedTransport.live_transports()
+            if owner not in before and owner._library is native)
+        self.assertEqual(len(recovered), 1)
+        owner = recovered[0]
+        self.assertEqual(owner._transport_id, native.identity)
+        owner.close()
+        owner.free()
+        self.assertNotIn(owner, EmbeddedTransport.live_transports())
+        self.assertTrue(native.freed)
+
+    def test_constructor_rejection_and_reentry_preserve_exact_live_owner_rules(self):
+        """
+        Drop explicit zero-output rejection and reject same-thread recovery while native creation is active.
+        移除明确零输出拒绝，并在原生创建活动时拒绝同线程恢复。
+        Return nothing after proving table access never deadlocks or invokes close/free during construction.
+        证明构造期间访问表不会死锁或调用 close／free 后无返回值。
+        """
+        before = EmbeddedTransport.live_transports()
+        interrupted = NativeLibrary()
+        interrupted.interrupt_before_constructor_publication = True
+        with patch("luaskills.embedded_transport.ctypes.CDLL", return_value=interrupted):
+            with self.assertRaises(KeyboardInterrupt):
+                EmbeddedTransport(config(), library_path=Path(__file__))
+        self.assertEqual(EmbeddedTransport.live_transports(), before)
+        rejected = NativeLibrary()
+        rejected.publish_constructor_identity = False
+        rejected.constructor_status = EmbeddedNativeStatus.INVALID_ARGUMENT
+        with patch("luaskills.embedded_transport.ctypes.CDLL", return_value=rejected):
+            with self.assertRaises(EmbeddedTransportError):
+                EmbeddedTransport(config(), library_path=Path(__file__))
+        self.assertEqual(EmbeddedTransport.live_transports(), before)
+        zero_success = NativeLibrary()
+        zero_success.publish_constructor_identity = False
+        with patch("luaskills.embedded_transport.ctypes.CDLL", return_value=zero_success):
+            with self.assertRaisesRegex(RuntimeError, "returned a zero identity"):
+                EmbeddedTransport(config(), library_path=Path(__file__))
+        self.assertEqual(EmbeddedTransport.live_transports(), before)
+        active = NativeLibrary()
+        active.reenter_during_constructor = True
+        with patch("luaskills.embedded_transport.ctypes.CDLL", return_value=active):
+            owner = EmbeddedTransport(config(), library_path=Path(__file__))
+        self.assertEqual(active.constructor_reentry_errors,
+            ["embedded transport constructor is still active"] * 2)
+        self.assertFalse(active.closed)
+        self.assertFalse(active.freed)
+        owner.close()
+        owner.free()
+
+    def test_interrupted_native_release_recovers_only_exact_absent_owners(self):
+        """
+        Recover a result and transport whose native release succeeded before Python interruption.
+        恢复原生释放在 Python 中断前已成功的结果及传输。
+        Return nothing after exact NOT_FOUND evidence clears only the retained uncertain owner.
+        精确 NOT_FOUND 证据仅清除保留的不确定所有者后无返回值。
+        """
+        self.native.interrupt_after_result_release = True
+        with self.assertRaises(KeyboardInterrupt):
+            self.transport.request({"type":"describe"})
+        self.assertFalse(self.native.allocations)
+        self.native.interrupt_after_result_release = False
+        self.transport.release_results()
+        self.transport.close()
+        self.native.interrupt_after_transport_free = True
+        with self.assertRaises(KeyboardInterrupt):
+            self.transport.free()
+        self.native.interrupt_after_transport_free = False
+        self.assertIn(self.transport, EmbeddedTransport.live_transports())
+        self.transport.free()
+        self.assertNotIn(self.transport, EmbeddedTransport.live_transports())
 
     def test_callback_pump_query_returns_exact_read_only_owner_and_resolvable_type(self):
         """

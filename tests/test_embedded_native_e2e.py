@@ -5,14 +5,126 @@ Run the actual Python transport against an explicitly selected newly built LuaSk
 
 from __future__ import annotations
 
+import _thread
+import ast
+import inspect
 import os
+import sys
 import tempfile
+import textwrap
+import threading
 import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from luaskills import EmbeddedRuntimeError, EmbeddedTransport, EmbeddedTransportConfig, EmbeddedTransportError, create_engine_options
+
+
+@unittest.skipUnless(os.environ.get("LUASKILLS_LIB"), "LUASKILLS_LIB is not configured")
+class EmbeddedNativeConstructorOwnershipTests(unittest.TestCase):
+    """
+    Verify real ctypes constructor interruption retains the exact published transport owner.
+    验证真实 ctypes 构造中断保留精确已发布传输所有者。
+    """
+
+    def test_pending_signal_retains_original_constructor_owner(self):
+        """
+        Schedule a real pending signal after Core writes its output and recover the same SDK owner.
+        在 Core 写入输出后调度真实待处理信号，并恢复同一 SDK 所有者。
+        Return nothing after exact close and free remove the retained owner without opening a Lua VM.
+        精确关闭及释放移除保留所有者且不打开 Lua VM 后无返回值。
+        """
+        # Resolve the evolving call line from the actual constructor AST instead of a hard-coded line number.
+        # 从实际构造器 AST 解析会演进的调用行，不硬编码行号。
+        source_lines, first_line = inspect.getsourcelines(EmbeddedTransport.__init__)
+        syntax = ast.parse(textwrap.dedent("".join(source_lines)))
+        call_lines = [node.lineno for node in ast.walk(syntax)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name) and node.func.value.id == "self"
+            and node.func.attr == "_new"]
+        self.assertEqual(len(call_lines), 1)
+        call_line = first_line + call_lines[0] - 1
+        # Shared observation holds the exact original object and sole output cell without modifying either.
+        # 共享观测保留精确原对象及唯一输出单元，不修改二者。
+        observed: dict[str, object] = {
+            "owner": None, "output": None, "published_identity": 0, "scheduled": False,
+        }
+        # These bounded barriers keep the pending signal inside the constructor on every supported platform.
+        # 这些有界屏障让待处理信号在每个受支持平台上都位于构造器内部。
+        entered = threading.Event()
+        scheduled = threading.Event()
+
+        def trace_constructor(frame, event, argument):
+            """
+            Capture constructor locals at the actual native-call line; return this trace without raising.
+            在实际原生调用行捕获构造器局部量；返回此跟踪函数且不抛异常。
+            Parameters are the interpreter frame, event and argument; the unchanged callback is returned.
+            参数为解释器帧、事件及参数；返回未更改的回调函数。
+            """
+            if frame.f_code is EmbeddedTransport.__init__.__code__ and event == "line" and frame.f_lineno == call_line:
+                observed["owner"] = frame.f_locals["self"]
+                observed["output"] = frame.f_locals["self"]._transport_identity
+                entered.set()
+            elif frame.f_code is EmbeddedTransport.__init__.__code__ and event == "line" and entered.is_set():
+                # Wait without raising or replacing FFI when the native call has already published its output.
+                # 原生调用已发布输出时，仅等待，绝不抛异常或替换 FFI。
+                scheduled.wait(5)
+            return trace_constructor
+
+        def interrupt_after_publication():
+            """
+            Schedule Python's real pending interrupt only after the original output becomes nonzero.
+            仅在原始输出变为非零后调度 Python 真实待处理中断。
+            No parameters; return after scheduling or a bounded failure that the test reports.
+            无参数；调度完成或测试报告的有界失败后返回。
+            """
+            if not entered.wait(5):
+                return
+            deadline = time.monotonic() + 5
+            while observed["output"].value == 0 and time.monotonic() < deadline:
+                pass
+            if observed["output"].value != 0:
+                observed["scheduled"] = True
+                _thread.interrupt_main()
+            scheduled.set()
+
+        # Fixed small budgets allocate only a transport root; no runtime, pool, session or Lua VM is created.
+        # 固定小预算仅分配传输根；不创建运行时、池、会话或 Lua VM。
+        config = EmbeddedTransportConfig(max_runtimes=1, max_result_buffers=4,
+            max_result_bytes=8192, max_response_bytes=4096, max_request_bytes=4096)
+        original_interval = sys.getswitchinterval()
+        worker = threading.Thread(target=interrupt_after_publication)
+        before = EmbeddedTransport.live_transports()
+        owner = None
+        try:
+            sys.setswitchinterval(0.2)
+            worker.start()
+            sys.settrace(trace_constructor)
+            with self.assertRaises(KeyboardInterrupt):
+                EmbeddedTransport(config, library_path=Path(os.environ["LUASKILLS_LIB"]))
+        finally:
+            sys.settrace(None)
+            try:
+                worker.join(5)
+            except KeyboardInterrupt:
+                worker.join(5)
+            sys.setswitchinterval(original_interval)
+            self.assertFalse(worker.is_alive())
+            # Recover only the exact captured owner; cleanup remains explicit and observable.
+            # 仅恢复精确捕获的所有者；清理保持显式且可观察。
+            owner = observed["owner"]
+            if owner is not None and owner in EmbeddedTransport.live_transports():
+                self.assertIs(observed["output"], owner._transport_identity)
+                observed["published_identity"] = owner._transport_identity.value
+                owner.close()
+                owner.free()
+        self.assertTrue(observed["scheduled"])
+        self.assertIsNotNone(owner)
+        self.assertNotEqual(observed["published_identity"], 0)
+        self.assertEqual(observed["output"].value, 0)
+        self.assertNotIn(owner, EmbeddedTransport.live_transports())
+        self.assertEqual(EmbeddedTransport.live_transports(), before)
 
 
 class EmbeddedNativeFixture:
