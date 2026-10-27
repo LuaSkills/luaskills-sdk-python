@@ -1828,6 +1828,7 @@ def default_host_options(runtime_root: str | os.PathLike[str]) -> dict[str, Any]
         "allow_network_download": True,
         "github_base_url": None,
         "github_api_base_url": None,
+        "github_token": None,
         "sqlite_library_path": None,
         "sqlite_provider_mode": "dynamic_library",
         "sqlite_callback_mode": "standard",
