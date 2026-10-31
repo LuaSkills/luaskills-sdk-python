@@ -425,7 +425,9 @@ startup = unittest.defaultTestLoader.discover(sys.argv[1], pattern='test_embedde
 if startup.countTestCases() < 10:
     raise RuntimeError('The mandatory actual startup regression suite is incomplete')
 suite = unittest.TestSuite()
-for pattern in ('test_embedded_native_e2e.py', 'test_embedded_json_vectors.py'):
+# SQLite tests execute the packaged demo and captured callback generations with no allowed skips.
+# SQLite 测试执行包内示例及捕获的回调代次，不允许跳过。
+for pattern in ('test_embedded_native_e2e.py', 'test_embedded_json_vectors.py', 'test_sqlite_host.py'):
     suite.addTests(unittest.defaultTestLoader.discover(sys.argv[1], pattern=pattern))
 # Exercise the real encoding-failure snapshot regressions against each installed wheel or rebuilt sdist.
 # 对每个已安装轮包或重建源码包执行真实编码失败快照回归。
@@ -954,6 +956,10 @@ def examples(args):
     print(run([str(python.resolve()), "-I", "-X", "utf8", str((args.root / "examples/embedded_runtime.py").resolve()),
                "--library", inputs["library"], "--library-sha256", inputs["library_sha256"],
                "--description", inputs["description"], "--mode", "both"], environment))
+    # Execute the source wrapper with only the official installed package available to its imports.
+    # 执行源码入口，且其导入仅可使用正式安装包。
+    print(run([str(python.resolve()), "-I", "-X", "utf8", str((args.root / "examples/provider_callback.py").resolve())],
+              environment, dict(os.environ, LUASKILLS_LIB=inputs["library"])))
     # Git's frozen file list excludes installed environments and generated runtime databases.
     # Git 冻结文件列表排除已安装环境及生成运行时数据库。
     tracked = run(["git", "ls-files", "-z"], args.root).split("\0")
