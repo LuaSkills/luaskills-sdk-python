@@ -58,7 +58,7 @@ python .\examples\lifecycle.py
 python .\examples\runtime_lease.py
 ```
 
-`provider_callback.py` 演示在 engine 创建前注册 JSON SQLite provider callback。
+`provider_callback`（TypeScript 为 `provider-callback.mjs`）执行真实 SQLite 接入验证：建表、参数化写入、事务回滚、查询和重建引擎后的持久化。数据仅由宿主创建，输出保留的数据库路径。
 
 ```powershell
 python .\examples\provider_callback.py
@@ -79,7 +79,7 @@ python -m luaskills.examples.embedded_runtime --library D:\candidate\luaskills.d
 精确分发产物对冻结原生候选的本地验收使用独立原生门禁。描述文件是候选实际 `luaskills_ffi_embedded_describe_v1` 返回的 JSON 字节；SDK 复用既有生成契约校验，并要求与已加载原生库完整描述一致：
 
 ```powershell
-python scripts/verify_embedded_native_distribution.py --wheel dist\luaskills_sdk-0.6.7-py3-none-any.whl --sdist dist\luaskills_sdk-0.6.7.tar.gz --library D:\candidate\luaskills.dll --library-sha256 <frozen-library-sha256> --description D:\candidate\core-description.json
+python scripts/verify_embedded_native_distribution.py --wheel dist\luaskills_sdk-0.7.3-py3-none-any.whl --sdist dist\luaskills_sdk-0.7.3.tar.gz --library D:\candidate\luaskills.dll --library-sha256 <frozen-library-sha256> --description D:\candidate\core-description.json
 ```
 
 wheel/sdist 名称必须使用本次构建的精确产物。门禁在缺库或身份错误时失败，执行既有离线分发校验；若本地已有 twine，额外执行 `twine check --strict`。它仅用本地已有构建工具重新构建选定 sdist，然后将两个 wheel 分别安装到独立 venv，排除用户 site 和源码目录导入。每个安装环境还执行真实启动拒绝、迟到启动中断、预留取消及未知交付回归；跳过原生测试不能通过此门禁。不会发布包或下载运行时。构建工具必须已满足 `pyproject.toml`，缺失本地后端时 sdist 构建失败。单平台通过不证明其它平台或正式发布库通过。
@@ -102,3 +102,5 @@ python -m luaskills.examples.runtime_lease
 仓库工作流 **Examples Release** 在明确正式 SDK 完成轮次成功后生成 `luaskills-sdk-python-examples-{SDK_VERSION}.zip`。必须提供精确 SDK 源码 SHA、独立版本、核心标签及提交、候选及完成双方 run ID、attempt、完成源码 SHA 和匹配原生平台。工作流认证原已签名候选及独立成功完成凭据，冷安装带摘要的正式 PyPI 包，并使用记录的精确核心库执行 `embedded_runtime.py`。归档包含已跟踪示例、绑定已测 wheel 摘要的 requirements 及稳定 `PUBLICATION.json`，不包含虚拟环境或生成运行时文件。排序且不压缩的 ZIP 成员采用固定时间，跨重试生成相同归档及摘要字节；公共修改前还将精确字节上传为 artifact。
 
 release tag 保持 `examples-v{SDK_VERSION}` 并指向相同固定 SDK 源码 SHA，先在草稿中上传全部资产，再正式发布。正式发布相同字节可复用，不同字节或追加资产直接失败；不会覆盖资产，也不会追加到正式 SDK Release。
+
+SQLite 示例支持通过 `LUASKILLS_LIB` 指定已安装的核心动态库；Python 使用标准库，TypeScript 需要 Node.js 24+。

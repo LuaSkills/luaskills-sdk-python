@@ -95,11 +95,6 @@ class SkillOperationProgressCallbackTests(unittest.TestCase):
                     None,
                 ),
                 (
-                    "lancedb",
-                    "luaskills_ffi_set_lancedb_provider_json_callback",
-                    None,
-                ),
-                (
                     "host-tool",
                     "luaskills_ffi_set_host_tool_json_callback",
                     None,

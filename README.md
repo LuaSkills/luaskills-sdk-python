@@ -6,7 +6,7 @@ Main LuaSkills repository: [LuaSkills/luaskills](https://github.com/LuaSkills/lu
 
 Python SDK for integrating the LuaSkills runtime through the public JSON FFI surface.
 
-This Python SDK source targets the `0.6.7` release line independently of LuaSkills core `0.7.2`; publication and artifact verification follow the release workflow. It retains the strict package-level skill configuration contract and defaults runtime assets to LuaSkills core `v0.7.2`, vldb-controller `v0.2.3`, and vldb-sqlite `v0.1.6`.
+This source aligns with released LuaSkills core `0.7.3`. SQLite is registered and managed by the host; runtime installers fetch only the core and Lua assets.
 
 The SDK wraps native library loading, JSON FFI buffers, engine lifecycle, formal skill roots, authority-aware management calls, skill config, provider callbacks, host-tool callbacks, and runtime asset installation. Hosts should not need to hand-write low-level FFI buffers or JSON envelopes for normal integration.
 
@@ -29,17 +29,17 @@ Use `library_path` or `LUASKILLS_LIB` only when your host intentionally manages 
 
 ## Runtime Assets
 
-The source distribution includes a unified script that does not require the Python CLI and directly fetches LuaSkills FFI, Lua runtime packages, and VLDB:
+The source distribution includes a unified script that does not require the Python CLI and directly fetches LuaSkills FFI, Lua runtime packages:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/deps/sync_runtime_assets.ps1 -Target all -Database vldb-controller -RuntimeRoot D:\runtime\luaskills
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/deps/sync_runtime_assets.ps1 -Target all -RuntimeRoot D:\runtime\luaskills
 ```
 
 ```bash
-RUNTIME_ROOT=/opt/luaskills scripts/deps/sync_runtime_assets.sh all vldb-controller
+RUNTIME_ROOT=/opt/luaskills scripts/deps/sync_runtime_assets.sh all
 ```
 
-Supported targets are `all`, `luaskills`, `lua`, and `vldb`. VLDB presets are `none`, `vldb-controller`, `vldb-direct`, and `host-callback`. The scripts pin LuaSkills to `v0.7.2` by default and accept explicit release-version overrides.
+Sync script targets are `all`, `luaskills`, and `lua`, with core `v0.7.3`. CLI database presets are only `none` and `host-callback`; the latter sets `sqlite_callback_mode: json` and still requires host registration.
 
 `install-runtime` downloads GitHub Release assets, verifies `.sha256` sidecars, extracts native files and Lua runtime packages, and writes:
 
@@ -56,9 +56,7 @@ SDK `0.6.5` retains the exact transport owner, loaded library, and original `uin
 Supported database modes:
 
 - `none`: installs the Lua runtime archive and the LuaSkills FFI SDK archive, without database providers.
-- `vldb-direct`: installs `vldb-sqlite-lib` and `vldb-lancedb-lib` dynamic libraries and uses `dynamic_library` provider mode.
-- `vldb-controller`: installs `vldb-controller` and uses managed `space_controller` provider mode.
-- `host-callback`: installs no VLDB binaries and generates `host_callback + json` host options.
+- `host-callback`: installs no database binaries and sets `sqlite_callback_mode: json`; the host must register SQLite.
 
 Default LuaSkills assets:
 
@@ -115,20 +113,20 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/deps/fetch_managed_r
 python scripts/debug-tools/managed_runtime_layout_check.py D:\VulcanCodeData\luaskills --distribution-root D:\VulcanCode\dependencies\runtimes --environment-root D:\VulcanCodeData\managed-runtime-envs
 ```
 
-Python SDK `0.6.7` pins LuaSkills core to the independently versioned `v0.7.2` and resolves runtime packages from the compatible `0.1` series by selecting the newest published patch automatically.
+Python SDK `0.7.3` pins LuaSkills core to the independently versioned `v0.7.3` and resolves runtime packages from the compatible `0.1` series by selecting the newest published patch automatically.
 
 ## Version Alignment
 
 - SDK patch versions and core versions are independent; use the exact core version required by the packaged generated contract.
-- This source defaults to LuaSkills core tag `v0.7.2`.
+- This source defaults to LuaSkills core tag `v0.7.3`.
 - Runtime packages and native dependencies still come from the split `LuaSkills/luaskills-packages` and related release assets.
 - SDK default host options pass `runtime_root`, null managed-root override slots, and the complete stable `managed_runtime_config`; LuaSkills derives the fixed data layout until the host explicitly overrides roots or policy.
 - Host tools live directly under `runtime_root/bin`, not `runtime_root/bin/tools`.
 
 ```powershell
 luaskills install-runtime --database none --runtime-root D:\runtime\luaskills
-luaskills install-runtime --database vldb-direct --runtime-root D:\runtime\luaskills
-luaskills install-runtime --database vldb-controller --runtime-root D:\runtime\luaskills
+luaskills install-runtime --database host-callback --runtime-root D:\runtime\luaskills
+luaskills install-runtime --database host-callback --runtime-root D:\runtime\luaskills
 luaskills install-runtime --database host-callback --runtime-root D:\runtime\luaskills
 luaskills install-runtime --database none --managed-runtimes all --runtime-root D:\runtime\luaskills
 ```
@@ -136,7 +134,7 @@ luaskills install-runtime --database none --managed-runtimes all --runtime-root 
 Use `--dry-run` to inspect exact release URLs before downloading:
 
 ```powershell
-luaskills install-runtime --database vldb-direct --runtime-root D:\runtime\luaskills --dry-run
+luaskills install-runtime --database host-callback --runtime-root D:\runtime\luaskills --dry-run
 ```
 
 Advanced hosts that already manage Lua packages can skip the Lua runtime archive:
@@ -187,49 +185,25 @@ luaskills list --runtime-root D:\runtime\luaskills
 luaskills call demo-standard-ffi-skill-ping '{"note":"python"}' --runtime-root D:\runtime\luaskills
 ```
 
-If you need VLDB direct libraries:
+For host-managed SQLite, select the callback preset and register your implementation:
 
 ```powershell
-luaskills install-runtime --database vldb-direct --runtime-root D:\runtime\luaskills
-```
-
-If you prefer the shared controller mode:
-
-```powershell
-luaskills install-runtime --database vldb-controller --runtime-root D:\runtime\luaskills
+luaskills install-runtime --database host-callback --runtime-root D:\runtime\luaskills
 ```
 
 ## Provider Callback
 
-SQLite / LanceDB `host_callback + json` mode can be registered through the SDK before engine creation:
+Run the shipped real SQLite demo: it verifies schema creation, parameterized writes, failed-batch rollback, queries, and persistence after recreating the engine. It prints the database path and retains the data for inspection.
 
-```python
-from luaskills import LuaSkillsClient, LuaSkillsJsonFfi
+Uses Python standard-library `sqlite3`, without an extra driver.
 
-runtime_root = "D:/runtime/luaskills"
-ffi = LuaSkillsJsonFfi(runtime_root=runtime_root)
-
-
-def sqlite_provider(request):
-    return {"ok": True, "request": request}
-
-
-ffi.set_sqlite_provider_json_callback(sqlite_provider)
-
-try:
-    client = LuaSkillsClient(
-        runtime_root=runtime_root,
-        host_options={
-            "sqlite_provider_mode": "host_callback",
-            "sqlite_callback_mode": "json",
-        },
-    )
-    client.close()
-finally:
-    ffi.clear_sqlite_provider_json_callback()
+```sh
+python -m luaskills.examples.provider_callback
 ```
 
-Callbacks must be registered before `engine_new`. Changing callbacks later does not retroactively affect already-created engines.
+Callbacks receive `{action, binding, input}`: `binding.default_database_path` is provided by the core and `input` is the host SQL protocol supplied by the skill. The demo implements `execute_script`, `execute_batch`, and `query_json`; unsupported actions fail explicitly. The host owns SQL parameters, transactions, and connection lifetime. Never let skill input override the binding path.
+
+Register before creating the engine and set `sqlite_callback_mode: "json"`. Engines capture their provider; replacement or clearing affects only new engines. The SDK retains old callbacks until native owners are freed, and host database resources must remain valid too. `host_mode: "desktop"` hides Windows command windows; `"console"` is the default. Uninstalling a skill does not delete its host database.
 
 ## Host Tool Callback
 
@@ -648,3 +622,7 @@ After the explicit SDK completion attempt succeeds, dispatch **Examples Release*
 - `luaskills-sdk-python-examples-{VERSION}.zip.sha256`
 
 The `examples-v` prefix preserves the existing example download protocol and keeps example assets separate from the final SDK Release. Existing equal bytes are reused; different bytes are refused without `--clobber`.
+
+## 0.7.3 Database Migration
+
+VLDB, LanceDB, dynamic database library paths, provider modes and controller configuration are removed. SQLite remains host-registered only. The default released core excludes the SQLite journal backend and rejects file-journal initialization with an explicit `sqlite-journal` feature error; custom cores can opt into this adapter. Existing database files are not automatically removed or migrated.

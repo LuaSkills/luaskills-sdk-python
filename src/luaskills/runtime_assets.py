@@ -25,7 +25,7 @@ from typing import Any, Callable, Iterator
 
 from .roots import normalized_path
 
-DEFAULT_LUASKILLS_VERSION = "v0.7.2"
+DEFAULT_LUASKILLS_VERSION = "v0.7.3"
 """
 Default LuaSkills release tag used by SDK runtime installation.
 SDK 运行时安装使用的默认 LuaSkills 发布标签。
@@ -37,23 +37,8 @@ Default luaskills-packages release series used by SDK runtime installation.
 SDK 运行时安装使用的默认 luaskills-packages 发布协议线。
 """
 
-DEFAULT_VLDB_CONTROLLER_VERSION = "v0.2.3"
-"""
-Default vldb-controller release tag used by SDK runtime installation.
-SDK 运行时安装使用的默认 vldb-controller 发布标签。
-"""
 
-DEFAULT_VLDB_SQLITE_VERSION = "v0.1.6"
-"""
-Default vldb-sqlite release tag used by SDK runtime installation.
-SDK 运行时安装使用的默认 vldb-sqlite 发布标签。
-"""
 
-DEFAULT_VLDB_LANCEDB_VERSION = "v0.1.5"
-"""
-Default vldb-lancedb release tag used by SDK runtime installation.
-SDK 运行时安装使用的默认 vldb-lancedb 发布标签。
-"""
 
 SHA256_HEX_PATTERN = re.compile(r"^[0-9a-fA-F]{64}$")
 """
@@ -110,22 +95,12 @@ class RuntimeDatabasePreset(str, Enum):
     不安装也不配置数据库 provider。
     """
 
-    VLDB_CONTROLLER = "vldb-controller"
-    """
-    Use vldb-controller through space_controller mode.
-    通过 space_controller 模式使用 vldb-controller。
-    """
 
-    VLDB_DIRECT = "vldb-direct"
-    """
-    Use vldb-sqlite-lib and vldb-lancedb-lib dynamic libraries directly.
-    直接使用 vldb-sqlite-lib 与 vldb-lancedb-lib 动态库。
-    """
 
     HOST_CALLBACK = "host-callback"
     """
-    Let the host provide JSON callbacks instead of native VLDB assets.
-    由宿主提供 JSON callback，而不是安装原生 VLDB 资产。
+    Let the host provide SQLite JSON callbacks without installing database assets.
+    由宿主提供 SQLite JSON 回调，不安装数据库资产。
     """
 
 
@@ -179,11 +154,8 @@ def resolve_runtime_platform_target(system: str | None = None, machine: str | No
             "platform_key": "windows-x64",
             "target_triple": "x86_64-pc-windows-msvc",
             "archive_ext": ".zip",
-            "controller_binary_name": "vldb-controller.exe",
             "dynamic_library_ext": ".dll",
             "luaskills_library_name": "luaskills.dll",
-            "sqlite_library_name": "vldb_sqlite.dll",
-            "lancedb_library_name": "vldb_lancedb.dll",
         }
     if os_name == "darwin" and arch_name in {"x86_64", "aarch64"}:
         return darwin_target(arch_name, "macos-x64" if arch_name == "x86_64" else "macos-arm64")
@@ -199,16 +171,10 @@ def build_runtime_install_manifest(
     luaskills_version: str = DEFAULT_LUASKILLS_VERSION,
     lua_runtime_version: str | None = None,
     lua_runtime_series: str = DEFAULT_LUASKILLS_PACKAGES_SERIES,
-    vldb_controller_version: str = DEFAULT_VLDB_CONTROLLER_VERSION,
-    vldb_sqlite_version: str = DEFAULT_VLDB_SQLITE_VERSION,
-    vldb_lancedb_version: str = DEFAULT_VLDB_LANCEDB_VERSION,
     include_luaskills_ffi: bool = True,
     include_lua_runtime: bool = True,
     luaskills_repo: str = "LuaSkills/luaskills",
     lua_runtime_repo: str | None = None,
-    vldb_controller_repo: str = "OpenVulcan/vldb-controller",
-    vldb_sqlite_repo: str = "OpenVulcan/vldb-sqlite",
-    vldb_lancedb_repo: str = "OpenVulcan/vldb-lancedb",
     managed_runtimes: ManagedRuntimeTarget | str = ManagedRuntimeTarget.NONE,
     managed_python_version: str = DEFAULT_MANAGED_PYTHON_VERSION,
     managed_uv_version: str = DEFAULT_MANAGED_UV_VERSION,
@@ -230,19 +196,12 @@ def build_runtime_install_manifest(
     )
     assets = build_runtime_asset_descriptors(
         target=target,
-        database=preset,
         luaskills_version=luaskills_version,
-        vldb_controller_version=vldb_controller_version,
-        vldb_sqlite_version=vldb_sqlite_version,
-        vldb_lancedb_version=vldb_lancedb_version,
         include_luaskills_ffi=include_luaskills_ffi,
         include_lua_runtime=include_lua_runtime,
         luaskills_repo=luaskills_repo,
         lua_runtime_repo=lua_runtime_repo or "LuaSkills/luaskills-packages",
         lua_runtime_version=resolved_lua_runtime_version,
-        vldb_controller_repo=vldb_controller_repo,
-        vldb_sqlite_repo=vldb_sqlite_repo,
-        vldb_lancedb_repo=vldb_lancedb_repo,
     )
     return {
         "schema_version": 1,
@@ -251,7 +210,7 @@ def build_runtime_install_manifest(
         "database_mode": preset.value,
         "platform": target,
         "assets": assets,
-        "host_options_patch": build_host_options_patch(resolved_root, preset, target, assets),
+        "host_options_patch": build_host_options_patch(preset),
         "managed_runtimes": build_managed_runtime_install_plan(
             resolved_root,
             managed_runtimes,
@@ -277,7 +236,7 @@ def install_runtime_assets(**options: Any) -> dict[str, Any]:
             install_one_asset(runtime_root, asset, Path(temporary_root), manifest["platform"])
     if manifest.get("managed_runtimes"):
         install_managed_runtimes(runtime_root, manifest["managed_runtimes"], bool(options.get("force_managed_runtimes")))
-    manifest["host_options_patch"] = build_host_options_patch(runtime_root, normalize_database_preset(manifest["database_mode"]), manifest["platform"], manifest["assets"])
+    manifest["host_options_patch"] = build_host_options_patch(normalize_database_preset(manifest["database_mode"]))
     write_runtime_install_manifest(manifest)
     return manifest
 
@@ -346,55 +305,19 @@ def host_options_from_runtime_manifest(manifest: dict[str, Any]) -> dict[str, An
 
 def sanitize_runtime_manifest_host_options(runtime_root: Path, patch: object) -> dict[str, Any]:
     """
-    Validate runtime-root path fields from one manifest host option patch.
-    校验单个 manifest 宿主选项补丁中受 runtime-root 约束的路径字段。
+    Validate a manifest patch for runtime_root and return an independent host-options map.
+    校验 runtime_root 的清单补丁并返回独立宿主选项映射。
+    Reject retired database fields explicitly so old installations cannot restore bundled providers.
+    显式拒绝退役数据库字段，防止旧安装恢复捆绑提供方。
     """
-
     if not isinstance(patch, dict):
         raise ValueError("host_options_patch must be one object")
-    sanitized = dict(patch)
-    for key in ["sqlite_library_path", "lancedb_library_path"]:
-        sanitized_path = sanitize_runtime_manifest_path(runtime_root, sanitized.get(key), key)
-        if sanitized_path is not None:
-            sanitized[key] = sanitized_path
-    if "space_controller" in sanitized and sanitized["space_controller"] is not None:
-        space_controller = sanitized["space_controller"]
-        if not isinstance(space_controller, dict):
-            raise ValueError("host_options_patch.space_controller must be one object")
-        space_copy = dict(space_controller)
-        sanitized_path = sanitize_runtime_manifest_path(runtime_root, space_copy.get("executable_path"), "space_controller.executable_path")
-        if sanitized_path is not None:
-            space_copy["executable_path"] = sanitized_path
-        sanitized["space_controller"] = space_copy
-    return sanitized
+    for key in ("sqlite_library_path", "sqlite_provider_mode", "lancedb_library_path", "lancedb_provider_mode", "lancedb_callback_mode", "space_controller"):
+        if key in patch:
+            raise ValueError(f"host_options_patch.{key} was removed in 0.7.3; register SQLite with the host")
+    return dict(patch)
 
 
-def sanitize_runtime_manifest_path(runtime_root: Path, value: object, context: str) -> str | None:
-    """
-    Validate one runtime-root-scoped host option path.
-    校验单个受 runtime-root 约束的宿主选项路径。
-    """
-
-    if value is None:
-        return None
-    if not isinstance(value, str):
-        raise ValueError(f"host_options_patch.{context} must be a string path")
-    if not value.strip() or "\x00" in value:
-        raise ValueError(f"host_options_patch.{context} must be a path inside runtime root")
-    root_path = runtime_root.expanduser().resolve()
-    value_path = Path(value)
-    if PureWindowsPath(value).is_absolute() and not value_path.is_absolute():
-        raise ValueError(f"host_options_patch.{context} must be a path inside runtime root")
-    if value_path.is_absolute():
-        candidate_path = value_path.expanduser().resolve()
-    else:
-        segments = value.replace("\\", "/").split("/")
-        if any(segment in {"", ".", ".."} for segment in segments):
-            raise ValueError(f"host_options_patch.{context} must be a path inside runtime root")
-        candidate_path = (root_path / value).resolve()
-    if candidate_path == root_path or root_path not in candidate_path.parents:
-        raise ValueError(f"host_options_patch.{context} escapes runtime root: {value}")
-    return normalized_path(candidate_path)
 
 
 def resolve_luaskills_library_path_from_runtime(runtime_root: str | os.PathLike[str], target: dict[str, str] | None = None) -> Path | None:
@@ -533,11 +456,8 @@ def darwin_target(arch_name: str, platform_key: str) -> dict[str, str]:
         "platform_key": platform_key,
         "target_triple": f"{arch_name}-apple-darwin",
         "archive_ext": ".tar.gz",
-        "controller_binary_name": "vldb-controller",
         "dynamic_library_ext": ".dylib",
         "luaskills_library_name": "libluaskills.dylib",
-        "sqlite_library_name": "libvldb_sqlite.dylib",
-        "lancedb_library_name": "libvldb_lancedb.dylib",
     }
 
 
@@ -551,30 +471,20 @@ def linux_target(arch_name: str, platform_key: str) -> dict[str, str]:
         "platform_key": platform_key,
         "target_triple": f"{arch_name}-unknown-linux-gnu",
         "archive_ext": ".tar.gz",
-        "controller_binary_name": "vldb-controller",
         "dynamic_library_ext": ".so",
         "luaskills_library_name": "libluaskills.so",
-        "sqlite_library_name": "libvldb_sqlite.so",
-        "lancedb_library_name": "libvldb_lancedb.so",
     }
 
 
 def build_runtime_asset_descriptors(
     *,
     target: dict[str, str],
-    database: RuntimeDatabasePreset,
     luaskills_version: str,
-    vldb_controller_version: str,
-    vldb_sqlite_version: str,
-    vldb_lancedb_version: str,
     include_luaskills_ffi: bool,
     include_lua_runtime: bool,
     luaskills_repo: str,
     lua_runtime_repo: str,
     lua_runtime_version: str,
-    vldb_controller_repo: str,
-    vldb_sqlite_repo: str,
-    vldb_lancedb_repo: str,
 ) -> list[dict[str, Any]]:
     """
     Build every asset descriptor required by one manifest.
@@ -588,14 +498,6 @@ def build_runtime_asset_descriptors(
     if include_luaskills_ffi:
         asset_name = f"luaskills-ffi-sdk-{target['platform_key']}.tar.gz"
         assets.append(release_asset("luaskills_ffi", luaskills_repo, luaskills_version, asset_name, f"libs/{target['luaskills_library_name']}"))
-    if database == RuntimeDatabasePreset.VLDB_CONTROLLER:
-        asset_name = f"vldb-controller-{vldb_controller_version}-{target['target_triple']}{target['archive_ext']}"
-        assets.append(release_asset("vldb_controller", vldb_controller_repo, vldb_controller_version, asset_name, f"bin/{target['controller_binary_name']}"))
-    if database == RuntimeDatabasePreset.VLDB_DIRECT:
-        sqlite_asset = f"vldb-sqlite-lib-{vldb_sqlite_version}-{target['target_triple']}{target['archive_ext']}"
-        lancedb_asset = f"vldb-lancedb-lib-{vldb_lancedb_version}-{target['target_triple']}{target['archive_ext']}"
-        assets.append(release_asset("vldb_sqlite_lib", vldb_sqlite_repo, vldb_sqlite_version, sqlite_asset, f"libs/{target['sqlite_library_name']}"))
-        assets.append(release_asset("vldb_lancedb_lib", vldb_lancedb_repo, vldb_lancedb_version, lancedb_asset, f"libs/{target['lancedb_library_name']}"))
     return assets
 
 
@@ -671,45 +573,15 @@ def parse_release_semver(tag: str) -> tuple[int, int, int] | None:
         return None
 
 
-def build_host_options_patch(runtime_root: str | os.PathLike[str], database: RuntimeDatabasePreset, target: dict[str, str], assets: list[dict[str, Any]]) -> dict[str, Any]:
+def build_host_options_patch(database: RuntimeDatabasePreset) -> dict[str, Any]:
     """
-    Build host option overrides for one database mode.
-    为单个数据库模式构造宿主选项覆盖。
+    Return SQLite transport options for the selected host registration preset.
+    返回所选宿主注册预设的 SQLite 传输选项。
+    Database files and provider lifetime remain owned by the host; no assets are installed.
+    数据库文件及提供方生命周期由宿主拥有；不安装数据库资产。
     """
-
-    root = Path(runtime_root).expanduser().resolve()
     if database == RuntimeDatabasePreset.HOST_CALLBACK:
-        return {
-            "sqlite_provider_mode": "host_callback",
-            "sqlite_callback_mode": "json",
-            "lancedb_provider_mode": "host_callback",
-            "lancedb_callback_mode": "json",
-        }
-    if database == RuntimeDatabasePreset.VLDB_CONTROLLER:
-        return {
-            "sqlite_provider_mode": "space_controller",
-            "lancedb_provider_mode": "space_controller",
-            "space_controller": {
-                "endpoint": None,
-                "auto_spawn": True,
-                "executable_path": normalized_path(root / "bin" / target["controller_binary_name"]),
-                "process_mode": "managed",
-                "minimum_uptime_secs": 300,
-                "idle_timeout_secs": 900,
-                "default_lease_ttl_secs": 120,
-                "connect_timeout_secs": 5,
-                "startup_timeout_secs": 15,
-                "startup_retry_interval_ms": 250,
-                "lease_renew_interval_secs": 30,
-            },
-        }
-    if database == RuntimeDatabasePreset.VLDB_DIRECT:
-        return {
-            "sqlite_library_path": resolve_installed_asset(root, assets, "vldb_sqlite_lib"),
-            "sqlite_provider_mode": "dynamic_library",
-            "lancedb_library_path": resolve_installed_asset(root, assets, "vldb_lancedb_lib"),
-            "lancedb_provider_mode": "dynamic_library",
-        }
+        return {"sqlite_callback_mode": "json"}
     return {}
 
 
@@ -982,6 +854,10 @@ def install_one_asset(runtime_root: Path, asset: dict[str, Any], temporary_root:
     下载、校验、解压并安装单个资产。
     """
 
+    # Validate the supported role before downloading or extracting any archive.
+    # 在下载或解压归档前验证受支持的角色。
+    if asset["role"] not in ("lua_runtime", "luaskills_ffi"):
+        raise ValueError(f"Unsupported runtime asset role: {asset['role']}")
     asset_directory = temporary_root / asset["role"]
     archive_path = asset_directory / asset["asset_name"]
     extract_directory = asset_directory / "extract"
@@ -994,12 +870,7 @@ def install_one_asset(runtime_root: Path, asset: dict[str, Any], temporary_root:
         install_lua_runtime(runtime_root, extract_directory, asset)
     elif asset["role"] == "luaskills_ffi":
         install_luaskills_ffi(runtime_root, extract_directory, target, asset)
-    elif asset["role"] == "vldb_controller":
-        install_controller(runtime_root, extract_directory, target, asset)
-    elif asset["role"] == "vldb_sqlite_lib":
-        install_dynamic_library(runtime_root, extract_directory, target, "sqlite", asset)
-    elif asset["role"] == "vldb_lancedb_lib":
-        install_dynamic_library(runtime_root, extract_directory, target, "lancedb", asset)
+
 
 
 def download_text(url: str) -> str:
@@ -1334,34 +1205,8 @@ def install_luaskills_ffi(runtime_root: Path, extract_directory: Path, target: d
     asset["installed_path"] = str(installed_path.relative_to(runtime_root)).replace("\\", "/")
 
 
-def install_controller(runtime_root: Path, extract_directory: Path, target: dict[str, str], asset: dict[str, Any]) -> None:
-    """
-    Install vldb-controller into the runtime bin directory.
-    将 vldb-controller 安装到 runtime bin 目录。
-    """
-
-    source = find_file(extract_directory, lambda name: name == target["controller_binary_name"])
-    if source is None:
-        raise FileNotFoundError(f"{target['controller_binary_name']} was not found in {asset['asset_name']}")
-    destination = runtime_root / "bin" / target["controller_binary_name"]
-    shutil.copy2(source, destination)
-    destination.chmod(0o755)
-    asset["installed_path"] = f"bin/{target['controller_binary_name']}"
 
 
-def install_dynamic_library(runtime_root: Path, extract_directory: Path, target: dict[str, str], name_hint: str, asset: dict[str, Any]) -> None:
-    """
-    Install one VLDB dynamic library into the runtime libs directory.
-    将单个 VLDB 动态库安装到 runtime libs 目录。
-    """
-
-    library_ext = target["dynamic_library_ext"]
-    source = find_file(extract_directory, lambda name: name.endswith(library_ext) and name_hint in name.lower())
-    if source is None:
-        raise FileNotFoundError(f"dynamic library for {asset['role']} was not found in {asset['asset_name']}")
-    destination = runtime_root / "libs" / source.name
-    shutil.copy2(source, destination)
-    asset["installed_path"] = f"libs/{source.name}"
 
 
 def copy_directory_if_present(source: Path, destination: Path) -> None:

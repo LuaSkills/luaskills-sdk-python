@@ -6,7 +6,7 @@ LuaSkills 主仓库：[LuaSkills/luaskills](https://github.com/LuaSkills/luaskil
 
 Python SDK，用于通过公共 JSON FFI 接入 LuaSkills 运行时。
 
-本 Python SDK 源码面向 `0.6.7` 发布线，独立绑定 LuaSkills core `0.7.2`；发布与资产验证遵循发布工作流。它沿用严格的技能包级配置契约，并将运行时资产默认值设为 LuaSkills core `v0.7.2`、vldb-controller `v0.2.3` 与 vldb-sqlite `v0.1.6`。
+此源码对齐已发布的 LuaSkills core `0.7.3`。SQLite 仅由宿主注册和管理；运行时安装器仅安装核心与 Lua 资源。
 
 SDK 封装了原生动态库加载、JSON FFI buffer、engine 生命周期、正式 skill root、带权限语义的管理调用、skill config、provider callback、宿主工具 callback 与 runtime 资产安装。宿主在常规集成中不需要手写底层 FFI buffer 或 JSON 包络。
 
@@ -29,17 +29,17 @@ luaskills version --runtime-root D:\runtime\luaskills
 
 ## Runtime 资产
 
-源码包还提供不依赖 Python CLI 的统一同步脚本，可直接拉取 LuaSkills FFI、Lua runtime packages 与 VLDB：
+源码包还提供不依赖 Python CLI 的统一同步脚本，可直接拉取 LuaSkills FFI、Lua runtime packages：
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/deps/sync_runtime_assets.ps1 -Target all -Database vldb-controller -RuntimeRoot D:\runtime\luaskills
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/deps/sync_runtime_assets.ps1 -Target all -RuntimeRoot D:\runtime\luaskills
 ```
 
 ```bash
-RUNTIME_ROOT=/opt/luaskills scripts/deps/sync_runtime_assets.sh all vldb-controller
+RUNTIME_ROOT=/opt/luaskills scripts/deps/sync_runtime_assets.sh all
 ```
 
-目标支持 `all`、`luaskills`、`lua`、`vldb`；VLDB 模式支持 `none`、`vldb-controller`、`vldb-direct`、`host-callback`。脚本默认固定 LuaSkills `v0.7.2`，并允许显式覆盖发布版本。
+同步脚本目标支持 `all`、`luaskills`、`lua`，默认核心版本为 `v0.7.3`。CLI 的数据库选项仅支持 `none` 与 `host-callback`；后者只设置 `sqlite_callback_mode: json`，仍需宿主注册。
 
 `install-runtime` 会下载 GitHub Release 资产、校验 `.sha256` 旁路文件、解压原生文件与 Lua runtime 包，并写入：
 
@@ -56,9 +56,7 @@ SDK `0.6.5` 在原生构造可能发布身份前保留精确传输所有者、�
 支持的数据库模式：
 
 - `none`：安装 Lua runtime 归档与 LuaSkills FFI SDK 归档，但不安装数据库 provider。
-- `vldb-direct`：安装 `vldb-sqlite-lib` 与 `vldb-lancedb-lib` 动态库，并使用 `dynamic_library` provider 模式。
-- `vldb-controller`：安装 `vldb-controller`，并使用托管的 `space_controller` provider 模式。
-- `host-callback`：不安装 VLDB 二进制文件，只生成 `host_callback + json` 宿主配置。
+- `host-callback`：不安装数据库二进制，只设置 `sqlite_callback_mode: json`；宿主必须注册 SQLite。
 
 默认 LuaSkills 资产：
 
@@ -115,20 +113,20 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/deps/fetch_managed_r
 python scripts/debug-tools/managed_runtime_layout_check.py D:\VulcanCodeData\luaskills --distribution-root D:\VulcanCode\dependencies\runtimes --environment-root D:\VulcanCodeData\managed-runtime-envs
 ```
 
-Python SDK `0.6.7` 默认固定到独立版本的 LuaSkills core `v0.7.2`，并从兼容的 `0.1` 协议线中自动解析最新已发布的 runtime packages patch 版本。
+Python SDK `0.7.3` 默认固定到独立版本的 LuaSkills core `v0.7.3`，并从兼容的 `0.1` 协议线中自动解析最新已发布的 runtime packages patch 版本。
 
 ## 版本对齐
 
 - SDK 补丁版本与核心版本独立；使用包内生成契约要求的精确核心版本。
-- 本源码默认指向 LuaSkills core 标签 `v0.7.2`。
+- 本源码默认指向 LuaSkills core 标签 `v0.7.3`。
 - runtime packages 与 native deps 仍然来自拆分后的 `LuaSkills/luaskills-packages` 及相关发布资产。
 - SDK 默认 host options 传入 `runtime_root`、两个空的受管根覆盖槽与完整稳定的 `managed_runtime_config`；宿主未显式覆盖时，LuaSkills 会推导固定数据布局。
 - 宿主工具直接放在 `runtime_root/bin`，不再放到 `runtime_root/bin/tools`。
 
 ```powershell
 luaskills install-runtime --database none --runtime-root D:\runtime\luaskills
-luaskills install-runtime --database vldb-direct --runtime-root D:\runtime\luaskills
-luaskills install-runtime --database vldb-controller --runtime-root D:\runtime\luaskills
+luaskills install-runtime --database host-callback --runtime-root D:\runtime\luaskills
+luaskills install-runtime --database host-callback --runtime-root D:\runtime\luaskills
 luaskills install-runtime --database host-callback --runtime-root D:\runtime\luaskills
 luaskills install-runtime --database none --managed-runtimes all --runtime-root D:\runtime\luaskills
 ```
@@ -136,7 +134,7 @@ luaskills install-runtime --database none --managed-runtimes all --runtime-root 
 下载前可用 `--dry-run` 检查准确的 release URL：
 
 ```powershell
-luaskills install-runtime --database vldb-direct --runtime-root D:\runtime\luaskills --dry-run
+luaskills install-runtime --database host-callback --runtime-root D:\runtime\luaskills --dry-run
 ```
 
 已经自行管理 Lua 包的高级宿主可以跳过 Lua runtime 归档：
@@ -187,49 +185,25 @@ luaskills list --runtime-root D:\runtime\luaskills
 luaskills call demo-standard-ffi-skill-ping '{"note":"python"}' --runtime-root D:\runtime\luaskills
 ```
 
-如果需要 VLDB 直连动态库：
+需要宿主管理 SQLite 时，选择回调预设并注册实现：
 
 ```powershell
-luaskills install-runtime --database vldb-direct --runtime-root D:\runtime\luaskills
-```
-
-如果更希望使用共享 controller 模式：
-
-```powershell
-luaskills install-runtime --database vldb-controller --runtime-root D:\runtime\luaskills
+luaskills install-runtime --database host-callback --runtime-root D:\runtime\luaskills
 ```
 
 ## Provider Callback
 
-SQLite / LanceDB 的 `host_callback + json` 模式可以在 engine 创建前通过 SDK 注册：
+使用随包提供的真实 SQLite 示例：验证建表、参数化写入、失败批次回滚、查询及重建引擎后的持久化。输出数据库路径，示例数据保留供检查。
 
-```python
-from luaskills import LuaSkillsClient, LuaSkillsJsonFfi
+使用 Python 标准库 `sqlite3`，无需额外驱动。
 
-runtime_root = "D:/runtime/luaskills"
-ffi = LuaSkillsJsonFfi(runtime_root=runtime_root)
-
-
-def sqlite_provider(request):
-    return {"ok": True, "request": request}
-
-
-ffi.set_sqlite_provider_json_callback(sqlite_provider)
-
-try:
-    client = LuaSkillsClient(
-        runtime_root=runtime_root,
-        host_options={
-            "sqlite_provider_mode": "host_callback",
-            "sqlite_callback_mode": "json",
-        },
-    )
-    client.close()
-finally:
-    ffi.clear_sqlite_provider_json_callback()
+```sh
+python -m luaskills.examples.provider_callback
 ```
 
-callback 必须在 `engine_new` 前注册；engine 创建后再切换 callback 不会 retroactive 影响已存在的 engine。
+回调接收 `{action, binding, input}`：`binding.default_database_path` 是核心提供的路径，`input` 是技能传入的宿主 SQL 协议。示例实现 `execute_script`、`execute_batch`、`query_json`，其他动作明确报错。宿主负责 SQL 参数、事务和连接生命周期；不要让技能输入覆盖绑定路径。
+
+在引擎创建前注册回调，并设置 `sqlite_callback_mode: "json"`。回调在引擎创建时捕获；后续替换或清空只影响新引擎。SDK 保留旧回调至原生所有者释放，宿主的数据库资源也必须保持有效。`host_mode: "desktop"` 统一隐藏 Windows 命令窗口，`"console"` 为默认模式。技能卸载不会删除宿主数据库。
 
 ## 宿主工具 Callback
 
@@ -634,3 +608,7 @@ Python 必须先通过核心 GitHub 发布及真实 Cargo 消费前置条件；T
 - `luaskills-sdk-python-examples-{VERSION}.zip.sha256`
 
 `examples-v` 前缀保留现有示例下载协议，并使示例资产与正式 SDK Release 分离。现有相同字节可复用，不同字节直接拒绝，不使用 `--clobber`。
+
+## 0.7.3 数据库迁移
+
+移除 VLDB、LanceDB 及动态数据库库路径、提供方模式和控制器配置。仅保留宿主 SQLite 注册。默认发布核心不包含 SQLite 日志后端，文件日志初始化会明确返回需要 `sqlite-journal` 特性的错误；自定义核心可显式启用此适配器。原数据库文件不会自动删除或迁移。

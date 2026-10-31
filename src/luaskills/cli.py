@@ -81,14 +81,8 @@ def build_parser() -> argparse.ArgumentParser:
     install_runtime_parser.add_argument("--skip-luaskills-ffi", action="store_true")
     install_runtime_parser.add_argument("--luaskills-version", default=None)
     install_runtime_parser.add_argument("--lua-runtime-version", default=None)
-    install_runtime_parser.add_argument("--vldb-controller-version", default=None)
-    install_runtime_parser.add_argument("--vldb-sqlite-version", default=None)
-    install_runtime_parser.add_argument("--vldb-lancedb-version", default=None)
     install_runtime_parser.add_argument("--luaskills-repo", default="LuaSkills/luaskills")
     install_runtime_parser.add_argument("--lua-runtime-repo", default=None)
-    install_runtime_parser.add_argument("--vldb-controller-repo", default="OpenVulcan/vldb-controller")
-    install_runtime_parser.add_argument("--vldb-sqlite-repo", default="OpenVulcan/vldb-sqlite")
-    install_runtime_parser.add_argument("--vldb-lancedb-repo", default="OpenVulcan/vldb-lancedb")
     install_runtime_parser.add_argument("--managed-runtimes", default=ManagedRuntimeTarget.NONE.value, choices=[target.value for target in ManagedRuntimeTarget])
     install_runtime_parser.add_argument("--managed-python-version", default=None)
     install_runtime_parser.add_argument("--managed-uv-version", default=None)
@@ -148,8 +142,6 @@ def build_parser() -> argparse.ArgumentParser:
         subparser = subparsers.add_parser(command)
         subparser.add_argument("skill_id")
         subparser.add_argument("--target-root")
-        subparser.add_argument("--remove-sqlite", action="store_true")
-        subparser.add_argument("--remove-lancedb", action="store_true")
 
     return parser
 
@@ -229,7 +221,7 @@ def dispatch_engine_command(client: LuaSkillsClient, skill_roots: list[RuntimeSk
     elif args.command == "update":
         print_json(client.skills.update(skill_roots, install_request(args), target_root=target_root(args, skill_roots)))
     elif args.command == "uninstall":
-        print_json(client.skills.uninstall(skill_roots, args.skill_id, options=uninstall_options(args), target_root=target_root(args, skill_roots)))
+        print_json(client.skills.uninstall(skill_roots, args.skill_id, target_root=target_root(args, skill_roots)))
     elif args.command == "system-enable":
         print_json(client.system(authority).enable(skill_roots, args.first))
     elif args.command == "system-disable":
@@ -239,7 +231,7 @@ def dispatch_engine_command(client: LuaSkillsClient, skill_roots: list[RuntimeSk
     elif args.command == "system-update":
         print_json(client.system(authority).update(skill_roots, install_request(args), target_root=target_root(args, skill_roots)))
     elif args.command == "system-uninstall":
-        print_json(client.system(authority).uninstall(skill_roots, args.skill_id, options=uninstall_options(args), target_root=target_root(args, skill_roots)))
+        print_json(client.system(authority).uninstall(skill_roots, args.skill_id, target_root=target_root(args, skill_roots)))
     else:
         raise ValueError(f"unknown command: {args.command}")
 
@@ -257,9 +249,6 @@ def runtime_install_options(args: argparse.Namespace, runtime_root: Path) -> dic
         "include_luaskills_ffi": not args.skip_luaskills_ffi,
         "luaskills_repo": args.luaskills_repo,
         "lua_runtime_repo": args.lua_runtime_repo,
-        "vldb_controller_repo": args.vldb_controller_repo,
-        "vldb_sqlite_repo": args.vldb_sqlite_repo,
-        "vldb_lancedb_repo": args.vldb_lancedb_repo,
         "managed_runtimes": args.managed_runtimes,
         "force_managed_runtimes": args.force_managed_runtimes,
     }
@@ -267,12 +256,6 @@ def runtime_install_options(args: argparse.Namespace, runtime_root: Path) -> dic
         options["luaskills_version"] = args.luaskills_version
     if args.lua_runtime_version:
         options["lua_runtime_version"] = args.lua_runtime_version
-    if args.vldb_controller_version:
-        options["vldb_controller_version"] = args.vldb_controller_version
-    if args.vldb_sqlite_version:
-        options["vldb_sqlite_version"] = args.vldb_sqlite_version
-    if args.vldb_lancedb_version:
-        options["vldb_lancedb_version"] = args.vldb_lancedb_version
     if args.managed_python_version:
         options["managed_python_version"] = args.managed_python_version
     if args.managed_uv_version:
@@ -465,16 +448,6 @@ def install_request(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
-def uninstall_options(args: argparse.Namespace) -> dict[str, bool]:
-    """
-    Build uninstall cleanup options from CLI flags.
-    从 CLI 标志构造卸载清理选项。
-    """
-
-    return {
-        "remove_sqlite": args.remove_sqlite,
-        "remove_lancedb": args.remove_lancedb,
-    }
 
 
 def print_json(value: Any) -> None:

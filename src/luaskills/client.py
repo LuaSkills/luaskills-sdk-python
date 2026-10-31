@@ -933,20 +933,18 @@ class SkillManagementClient:
         skill_roots: list[RuntimeSkillRoot | dict[str, str]],
         skill_id: str,
         *,
-        options: dict[str, Any] | None = None,
         target_root: RuntimeSkillRoot | dict[str, str] | None = None,
         authority: Authority | str | None = None,
     ) -> dict[str, Any]:
         """
-        Uninstall one skill and optionally clean its databases.
-        卸载单个 skill，并可选清理其数据库。
+        Uninstall skill_id from skill_roots using the selected authority; return the lifecycle result.
+        使用所选权限从 skill_roots 卸载 skill_id；返回生命周期结果。
         """
 
         return self.client._call(self._function_name("uninstall_skill"), {
             "engine_id": self.client.engine_id,
             "skill_roots": roots_to_json(skill_roots),
             "skill_id": skill_id,
-            "options": options or {},
             "target_root": root_to_json(target_root),
             **self._authority_payload(authority),
         })
@@ -1807,6 +1805,9 @@ def default_host_options(runtime_root: str | os.PathLike[str]) -> dict[str, Any]
 
     root = Path(runtime_root).expanduser().resolve()
     base_options = {
+        # Console preserves inherited streams; desktop hides runtime-owned Windows processes.
+        # console 保留继承流；desktop 隐藏运行库自有 Windows 进程。
+        "host_mode": "console",
         "runtime_root": normalized_path(root),
         "managed_runtime_distribution_root": None,
         "managed_runtime_environment_root": None,
@@ -1829,13 +1830,7 @@ def default_host_options(runtime_root: str | os.PathLike[str]) -> dict[str, Any]
         "github_base_url": None,
         "github_api_base_url": None,
         "github_token": None,
-        "sqlite_library_path": None,
-        "sqlite_provider_mode": "dynamic_library",
         "sqlite_callback_mode": "standard",
-        "lancedb_library_path": None,
-        "lancedb_provider_mode": "dynamic_library",
-        "lancedb_callback_mode": "standard",
-        "space_controller": default_space_controller_options(),
         "cache_config": None,
         "runlua_pool_config": None,
         "reserved_entry_names": [],
@@ -1849,25 +1844,6 @@ def default_host_options(runtime_root: str | os.PathLike[str]) -> dict[str, Any]
     return merge_host_options(base_options, host_options_from_runtime_manifest(manifest)) if manifest else base_options
 
 
-def default_space_controller_options() -> dict[str, Any]:
-    """
-    Return the SDK default space-controller options.
-    返回 SDK 默认 space-controller 选项。
-    """
-
-    return {
-        "endpoint": None,
-        "auto_spawn": False,
-        "executable_path": None,
-        "process_mode": "managed",
-        "minimum_uptime_secs": 300,
-        "idle_timeout_secs": 900,
-        "default_lease_ttl_secs": 120,
-        "connect_timeout_secs": 5,
-        "startup_timeout_secs": 15,
-        "startup_retry_interval_ms": 250,
-        "lease_renew_interval_secs": 30,
-    }
 
 
 def merge_host_options(base: dict[str, Any], overrides: dict[str, Any]) -> dict[str, Any]:
@@ -1877,8 +1853,6 @@ def merge_host_options(base: dict[str, Any], overrides: dict[str, Any]) -> dict[
     """
 
     merged = {**base, **overrides}
-    if "space_controller" in overrides:
-        merged["space_controller"] = {**base["space_controller"], **overrides["space_controller"]}
     if "capabilities" in overrides:
         merged["capabilities"] = {**base["capabilities"], **overrides["capabilities"]}
     return merged

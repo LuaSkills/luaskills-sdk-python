@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Callable, Literal, TypedDict
 
 from .runtime_assets import resolve_luaskills_library_path_from_runtime
+from .sqlite_lifetime import JSON_ENGINE_SCOPES, library_key, retain_sqlite_scope, retire_sqlite_callback
 
 
 class FfiBorrowedBuffer(ctypes.Structure):
@@ -396,11 +397,9 @@ class LuaSkillsJsonFfi:
         ]
         self.library.luaskills_ffi_buffer_clone.restype = ctypes.c_int32
         self._configure_json_provider_setter("luaskills_ffi_set_sqlite_provider_json_callback")
-        self._configure_json_provider_setter("luaskills_ffi_set_lancedb_provider_json_callback")
         self._provider_owner_token = object()
         self._configured_json_provider_setters = {
             "luaskills_ffi_set_sqlite_provider_json_callback",
-            "luaskills_ffi_set_lancedb_provider_json_callback",
         }
         self._describe_cache: dict[str, Any] | None = None
         self._managed_session_wake_wrapper: MANAGED_SESSION_WAKE_CALLBACK_TYPE | None = None
@@ -418,10 +417,11 @@ class LuaSkillsJsonFfi:
 
     def call_json(self, function_name: str, payload: dict[str, Any]) -> Any:
         """
-        Call one JSON FFI entrypoint with one JSON payload.
-        使用一个 JSON 载荷调用 JSON FFI 入口。
+        Call function_name with a JSON payload and return its decoded result.
+        使用 JSON 载荷调用 function_name 并返回解码结果。
+        Keep SQLite generations alive from engine admission through successful destruction.
+        从引擎准入到成功销毁期间保持 SQLite 回调代次存活。
         """
-
         function = getattr(self.library, function_name)
         function.argtypes = [FfiBorrowedBuffer]
         function.restype = FfiOwnedBuffer
@@ -431,7 +431,24 @@ class LuaSkillsJsonFfi:
             ptr=ctypes.cast(storage, ctypes.POINTER(ctypes.c_uint8)) if payload_bytes else None,
             len=len(payload_bytes),
         )
-        return self._decode_envelope(function_name, function(borrowed))
+        # Admission precedes native capture, including concurrent callback replacement.
+        # 准入先于原生捕获，包含并发回调替换。
+        release_scope = retain_sqlite_scope(self.library_path) if function_name == "luaskills_ffi_engine_new_json" else None
+        try:
+            result = self._decode_envelope(function_name, function(borrowed))
+        except BaseException:
+            if release_scope is not None:
+                release_scope()
+            raise
+        if release_scope is not None:
+            JSON_ENGINE_SCOPES[(library_key(self.library_path), int(result["engine_id"]))] = release_scope
+        elif function_name == "luaskills_ffi_engine_free_json":
+            # The core has acknowledged destruction; failed frees never reach this release.
+            # 核心已确认销毁；失败释放不会执行此清理。
+            release_owner = JSON_ENGINE_SCOPES.pop((library_key(self.library_path), int(payload["engine_id"])), None)
+            if release_owner is not None:
+                release_owner()
+        return result
 
     def describe(self) -> dict[str, Any]:
         """
@@ -492,17 +509,6 @@ class LuaSkillsJsonFfi:
             callback,
         )
 
-    def set_lancedb_provider_json_callback(self, callback: JsonProviderCallback | None) -> None:
-        """
-        Register or clear the LanceDB JSON provider callback.
-        注册或清理 LanceDB JSON provider callback。
-        """
-
-        self._set_json_provider_callback(
-            "lancedb",
-            "luaskills_ffi_set_lancedb_provider_json_callback",
-            callback,
-        )
 
     def set_host_tool_json_callback(self, callback: HostToolJsonCallback | None) -> None:
         """
@@ -560,13 +566,6 @@ class LuaSkillsJsonFfi:
 
         self.set_sqlite_provider_json_callback(None)
 
-    def clear_lancedb_provider_json_callback(self) -> None:
-        """
-        Clear the LanceDB JSON provider callback slot.
-        清理 LanceDB JSON provider callback 槽位。
-        """
-
-        self.set_lancedb_provider_json_callback(None)
 
     def clear_host_tool_json_callback(self) -> None:
         """
@@ -607,7 +606,6 @@ class LuaSkillsJsonFfi:
         """
 
         self.clear_sqlite_provider_json_callback()
-        self.clear_lancedb_provider_json_callback()
         self.clear_host_tool_json_callback()
         self.clear_skill_operation_progress_json_callback()
         self.clear_model_embed_json_callback()
@@ -655,6 +653,8 @@ class LuaSkillsJsonFfi:
                 self._ensure_json_provider_setter_configured(function_name)
                 function = getattr(self.library, function_name)
                 self._call_provider_setter(function_name, function, None)
+                if kind == "sqlite":
+                    retire_sqlite_callback(self.library_path, previous_slot)
                 _JSON_PROVIDER_CALLBACK_SLOTS.pop(slot_key, None)
                 return
 
@@ -662,6 +662,8 @@ class LuaSkillsJsonFfi:
             function = getattr(self.library, function_name)
             callback_wrapper = JSON_PROVIDER_CALLBACK_TYPE(self._make_json_provider_callback(callback))
             self._call_provider_setter(function_name, function, callback_wrapper)
+            if kind == "sqlite" and previous_slot is not None:
+                retire_sqlite_callback(self.library_path, previous_slot)
             _JSON_PROVIDER_CALLBACK_SLOTS[slot_key] = JsonProviderSlotState(
                 self.library_path,
                 self._provider_owner_token,
@@ -810,12 +812,10 @@ class LuaSkillsJsonFfi:
         self._configured_json_provider_setters.add(function_name)
 
     def _json_provider_slot_key(self, kind: str) -> tuple[str, str]:
+        """Return the canonical library/kind slot key shared with captured callback ownership.
+        返回与捕获回调所有权共享的规范库及类型槽位键。
         """
-        Build one process-local provider slot key for this library and provider kind.
-        为当前动态库和 provider 类型构造一个进程内 provider 槽位键。
-        """
-
-        return (str(self.library_path), kind)
+        return (library_key(self.library_path), kind)
 
 
 def resolve_library_path(

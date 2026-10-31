@@ -16,6 +16,7 @@ from .embedded_contract import EMBEDDED_DESCRIPTION_MAX_BYTES, EMBEDDED_PROTOCOL
 from .embedded_compatibility import EmbeddedCompatibilityError, decode_core_description
 from .embedded_json import decode_embedded_json, encode_embedded_json
 from .ffi import FfiBorrowedBuffer, resolve_library_path
+from .sqlite_lifetime import retain_sqlite_scope
 
 
 # Each SDK control executor has one worker; ownership admission reserves the same native frame capacity.
@@ -259,6 +260,9 @@ class EmbeddedTransport:
         # 发布可恢复所有者前先实体化指针包装。
         config_pointer = ctypes.byref(native_config)
         identity_pointer = ctypes.byref(self._transport_identity)
+        # Pools can capture global SQLite registrations until this transport is freed.
+        # 在此传输释放前，池仍可能捕获全局 SQLite 注册。
+        self._release_sqlite_scope = retain_sqlite_scope(self.library_path)
         # Mark this one original call under the owner lock, then release the lock before native execution.
         # 在所有者锁内标记这一次原始调用，随后在原生执行前释放该锁。
         with self._lock:
@@ -284,6 +288,7 @@ class EmbeddedTransport:
             # Zero proves no native owner was published, including interruption before native entry.
             # 零值证明没有发布原生所有者，包含进入原生调用前发生的中断。
             if self._transport_identity.value == 0:
+                self._release_sqlite_scope()
                 with _LIVE_TRANSPORTS_LOCK:
                     if _LIVE_TRANSPORTS.get(id(self)) is self:
                         del _LIVE_TRANSPORTS[id(self)]
@@ -556,6 +561,7 @@ class EmbeddedTransport:
                 del _LIVE_TRANSPORTS[id(self)]
             self._transport_identity.value = 0
             self._free_uncertain = False
+            self._release_sqlite_scope()
 
     def callback_pump(self, runtime_id: str) -> embedded_pump.EmbeddedCallbackPump | None:
         """

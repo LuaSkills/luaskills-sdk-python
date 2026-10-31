@@ -16,7 +16,6 @@ from .client import (
     default_host_options,
     default_managed_runtime_config,
     default_pool_config,
-    default_space_controller_options,
 )
 from .config_contract import (
     SKILL_CONFIG_CONTRACT_VERSION,
@@ -240,7 +239,6 @@ __all__ = [
     "default_host_options",
     "default_managed_runtime_config",
     "default_pool_config",
-    "default_space_controller_options",
     "build_runtime_install_manifest",
     "host_options_from_runtime_manifest",
     "install_runtime_assets",

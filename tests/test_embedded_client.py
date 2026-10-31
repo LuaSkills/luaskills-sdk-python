@@ -275,7 +275,15 @@ class EmbeddedClientNativeTests(EmbeddedNativeFixture, unittest.TestCase):
         self.take(self.runtime.initialize(create_engine_options(self.root, host_options={
             "system_lua_lib_dir": self.system_root.as_posix(), "allow_network_download": False,
         }), self.runtime_limits, persistence))
-        self.assertEqual(self.take(self.runtime.status())["initialization"], "ready")
+        # Default releases reject file journals explicitly; the optional adapter has a separate native test mode.
+        # 默认发行版显式拒绝文件日志；可选适配器使用独立原生测试模式。
+        status = self.take(self.runtime.status())
+        if os.environ.get("LUASKILLS_SQLITE_JOURNAL_E2E") != "1":
+            self.assertEqual(status["initialization"], "failed")
+            self.assertEqual(status["error"]["code"], "invalid_argument")
+            self.assertIn("explicit sqlite-journal feature", status["error"]["message"])
+            return False
+        self.assertEqual(status["initialization"], "ready")
         self.take(self.runtime.register_plugin(self.plugin_id, {name: self.runtime_limits[name] for name in (
             "max_registered_pools", "max_sessions", "max_resident_vms", "max_running_calls",
             "max_queued_calls", "max_queued_bytes", "max_operations")}))
@@ -296,9 +304,10 @@ class EmbeddedClientNativeTests(EmbeddedNativeFixture, unittest.TestCase):
             Release the current known slot and initialize the next through the typed persistent facade.
             释放当前已知槽，并通过类型化持久外观初始化下一个槽。
             """
-            self.replace_persistent_runtime(persistence)
+            return self.replace_persistent_runtime(persistence)
 
-        replace_runtime()
+        if replace_runtime() is False:
+            return
         # This namespace comes from the actual core, never the FFI control slot.
         # 此命名空间来自实际核心，绝非 FFI 控制槽。
         namespace = self.take(self.runtime.status())["core_runtime_id"]
@@ -349,7 +358,8 @@ class EmbeddedClientNativeTests(EmbeddedNativeFixture, unittest.TestCase):
             deletion.result(5)
         self.assertEqual(error.exception.code, "busy")
         deletion.forget()
-        replace_runtime()
+        if replace_runtime() is False:
+            return
         self.assertNotEqual(self.take(self.runtime.status())["core_runtime_id"], namespace)
         self.assertEqual(self.take(self.runtime.history_get(namespace, operation.operation_id)), history)
         # Original historical operations are not adopted into the new live namespace.
@@ -370,7 +380,8 @@ class EmbeddedClientNativeTests(EmbeddedNativeFixture, unittest.TestCase):
         reconciled = self.take(self.runtime.history_get(namespace, operation.operation_id))
         self.assertEqual(reconciled["snapshot"], history["snapshot"])
         self.assertEqual(reconciled["reconciliation"], resolution)
-        replace_runtime()
+        if replace_runtime() is False:
+            return
         self.assertEqual(self.take(self.runtime.history_get(namespace, operation.operation_id)), reconciled)
         self.take(self.runtime.history_forget(namespace, operation.operation_id, revision))
         self.assertIsNone(self.take(self.runtime.history_get(namespace, operation.operation_id)))
@@ -403,9 +414,11 @@ class EmbeddedClientNativeTests(EmbeddedNativeFixture, unittest.TestCase):
         Exhaust real journal capacity through a durable callback, then recover the failed checkpoint without business replay.
         通过持久回调耗尽真实日志容量，再恢复失败检查点而不重放业务。
         """
-        self.replace_persistent_runtime({"path": str(self.root / "capacity.db"),
+        initialized = self.replace_persistent_runtime({"path": str(self.root / "capacity.db"),
             "journal": {"max_records": 1, "max_record_bytes": 32768, "max_database_bytes": 262144},
             "worker": {"max_pending_writes": 8, "max_pending_bytes": 131072}})
+        if initialized is False:
+            return
         # The handler's actual invocation count is independent of Lua success or persistence observations.
         # 处理器实际调用计数独立于 Lua 成功及持久化观测。
         calls = []

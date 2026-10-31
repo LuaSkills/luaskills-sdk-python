@@ -58,7 +58,7 @@ python .\examples\lifecycle.py
 python .\examples\runtime_lease.py
 ```
 
-`provider_callback.py` registers a JSON SQLite provider callback before engine creation.
+`provider_callback` (`provider-callback.mjs` for TypeScript) verifies real SQLite: schema creation, parameterized writes, transaction rollback, queries and persistence after engine recreation. Only the host creates data; the retained database path is printed.
 
 ```powershell
 python .\examples\provider_callback.py
@@ -79,7 +79,7 @@ If pump construction is interrupted after its thread starts, `transport.callback
 For local acceptance of exact distribution artifacts against a frozen native candidate, use the independent native gate. The description is the candidate's actual `luaskills_ffi_embedded_describe_v1` JSON bytes. The SDK validates its existing generated contract and requires full equality with the loaded library description:
 
 ```powershell
-python scripts/verify_embedded_native_distribution.py --wheel dist\luaskills_sdk-0.6.7-py3-none-any.whl --sdist dist\luaskills_sdk-0.6.7.tar.gz --library D:\candidate\luaskills.dll --library-sha256 <frozen-library-sha256> --description D:\candidate\core-description.json
+python scripts/verify_embedded_native_distribution.py --wheel dist\luaskills_sdk-0.7.3-py3-none-any.whl --sdist dist\luaskills_sdk-0.7.3.tar.gz --library D:\candidate\luaskills.dll --library-sha256 <frozen-library-sha256> --description D:\candidate\core-description.json
 ```
 
 Select the exact wheel/sdist names from your build. The gate requires missing-library and identity errors to fail, runs the existing offline distribution checks, uses `twine check --strict` when already available, rebuilds only the selected sdist with locally installed build tools, and installs each wheel into a separate venv with user site and checkout imports disabled. Each installation also runs actual startup-refusal, late-start interruption, reserve-cancellation and unknown-delivery regressions; native skips cannot pass this gate. No package publication or runtime download occurs. Build tools must already satisfy `pyproject.toml`; an unavailable local backend fails the sdist build. Passing on one platform does not prove acceptance on other platforms or release libraries.
@@ -102,3 +102,5 @@ The fixture skill is stored at `examples/fixture_runtime/user_skills/demo-standa
 The repository workflow **Examples Release** creates `luaskills-sdk-python-examples-{SDK_VERSION}.zip` after the explicit formal SDK completion attempt succeeds. Supply exact SDK source SHA/version, independent core tag/commit, both candidate and completion run IDs/attempts, completion source SHA and matching native platform. It authenticates the original signed candidate and separate successful completion, cold-installs the hashed official PyPI package and runs `embedded_runtime.py` against the exact recorded core library. The archive contains tracked examples, requirements with the tested wheel hash and stable `PUBLICATION.json`; it excludes virtual environments and generated runtime files. Sorted stored ZIP members with fixed timestamps produce identical archive/sidecar bytes across retries; exact bytes are uploaded as an artifact before public mutation.
 
 The release tag remains `examples-v{SDK_VERSION}`, pointing at the same fixed SDK source SHA. The workflow uploads every asset to a draft before publishing; final equal bytes may be reused, while different bytes or appending to a final release fail. It never overwrites assets or appends to the final SDK Release.
+
+Set `LUASKILLS_LIB` to the installed core library for the SQLite demo. Python uses its standard library; TypeScript requires Node.js 24+.

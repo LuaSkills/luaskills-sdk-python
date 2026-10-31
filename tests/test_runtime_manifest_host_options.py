@@ -14,37 +14,40 @@ from tempfile import TemporaryDirectory
 # 从检出目录运行测试时让源码包可导入。
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from luaskills.runtime_assets import host_options_from_runtime_manifest
+from luaskills.runtime_assets import host_options_from_runtime_manifest, build_runtime_install_manifest
+from luaskills import default_host_options
 
 
 class RuntimeManifestHostOptionsTests(unittest.TestCase):
+    """Verify host-only manifests and explicit rejection of retired database settings.
+    验证仅由宿主管理的清单，并显式拒绝退役数据库设置。
     """
-    Verify runtime manifest host option paths remain scoped to runtime_root.
-    校验运行时清单宿主选项路径保持在 runtime_root 范围内。
-    """
+
+    def test_host_callback_installs_no_database(self) -> None:
+        """Verify the actual manifest contains only core/Lua assets and rejects retired database configuration.
+        验证实际清单仅包含核心及 Lua 资产，并拒绝退役数据库配置。
+        """
+        with TemporaryDirectory() as temporary_text:
+            # Pin the fixture package version to keep this test entirely offline.
+            # 固定夹具包版本，使此测试完全离线。
+            manifest = build_runtime_install_manifest(runtime_root=temporary_text, database="host-callback", lua_runtime_version="v0.1.6")
+            self.assertEqual({asset["role"] for asset in manifest["assets"]}, {"lua_runtime", "luaskills_ffi"})
+            self.assertEqual(manifest["host_options_patch"], {"sqlite_callback_mode": "json"})
+            self.assertEqual(default_host_options(temporary_text)["host_mode"], "console")
+            for preset in ("vldb-controller", "vldb-direct"):
+                with self.assertRaises(ValueError):
+                    build_runtime_install_manifest(runtime_root=temporary_text, database=preset, lua_runtime_version="v0.1.6")
+            for key in ("sqlite_library_path", "sqlite_provider_mode", "lancedb_library_path", "lancedb_provider_mode", "lancedb_callback_mode", "space_controller"):
+                with self.assertRaisesRegex(ValueError, key):
+                    host_options_from_runtime_manifest({"runtime_root": temporary_text, "host_options_patch": {key: None}})
 
     def test_host_options_from_runtime_manifest_sanitizes_root_paths(self) -> None:
+        """Accept only current host registration settings and preserve desktop mode.
+        接受当前宿主注册设置，并保留桌面模式。
         """
-        Accept and normalize root-scoped manifest host option paths.
-        接受并归一化 root 范围内的 manifest 宿主选项路径。
-        """
-
         with TemporaryDirectory() as temporary_text:
-            runtime_root = Path(temporary_text)
-            manifest = {
-                "runtime_root": str(runtime_root),
-                "host_options_patch": {
-                    "sqlite_library_path": "libs/sqlite.dll",
-                    "lancedb_library_path": str(runtime_root / "libs" / "lancedb.dll"),
-                    "space_controller": {
-                        "executable_path": "bin/vldb-controller.exe",
-                    },
-                },
-            }
-
-            options = host_options_from_runtime_manifest(manifest)
-            self.assertEqual(options["sqlite_library_path"], str((runtime_root / "libs" / "sqlite.dll").resolve()).replace("\\", "/"))
-            self.assertEqual(options["space_controller"]["executable_path"], str((runtime_root / "bin" / "vldb-controller.exe").resolve()).replace("\\", "/"))
+            manifest = {"runtime_root": temporary_text, "host_options_patch": {"host_mode": "desktop", "sqlite_callback_mode": "json"}}
+            self.assertEqual(host_options_from_runtime_manifest(manifest), manifest["host_options_patch"])
 
     def test_host_options_from_runtime_manifest_rejects_escaping_path(self) -> None:
         """
