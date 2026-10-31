@@ -6,7 +6,7 @@ LuaSkills 主仓库：[LuaSkills/luaskills](https://github.com/LuaSkills/luaskil
 
 Python SDK，用于通过公共 JSON FFI 接入 LuaSkills 运行时。
 
-此源码对齐已发布的 LuaSkills core `0.7.3`。SQLite 仅由宿主注册和管理；运行时安装器仅安装核心与 Lua 资源。
+此源码对齐已发布的 LuaSkills core `0.7.4`。SQLite 仅由宿主注册和管理；运行时安装器仅安装核心与 Lua 资源。
 
 SDK 封装了原生动态库加载、JSON FFI buffer、engine 生命周期、正式 skill root、带权限语义的管理调用、skill config、provider callback、宿主工具 callback 与 runtime 资产安装。宿主在常规集成中不需要手写底层 FFI buffer 或 JSON 包络。
 
@@ -39,7 +39,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/deps/sync_runtime_as
 RUNTIME_ROOT=/opt/luaskills scripts/deps/sync_runtime_assets.sh all
 ```
 
-同步脚本目标支持 `all`、`luaskills`、`lua`，默认核心版本为 `v0.7.3`。CLI 的数据库选项仅支持 `none` 与 `host-callback`；后者只设置 `sqlite_callback_mode: json`，仍需宿主注册。
+同步脚本目标支持 `all`、`luaskills`、`lua`，默认核心版本为 `v0.7.4`。CLI 的数据库选项仅支持 `none` 与 `host-callback`；后者只设置 `sqlite_callback_mode: json`，仍需宿主注册。
 
 `install-runtime` 会下载 GitHub Release 资产、校验 `.sha256` 旁路文件、解压原生文件与 Lua runtime 包，并写入：
 
@@ -113,12 +113,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/deps/fetch_managed_r
 python scripts/debug-tools/managed_runtime_layout_check.py D:\VulcanCodeData\luaskills --distribution-root D:\VulcanCode\dependencies\runtimes --environment-root D:\VulcanCodeData\managed-runtime-envs
 ```
 
-Python SDK `0.7.3` 默认固定到独立版本的 LuaSkills core `v0.7.3`，并从兼容的 `0.1` 协议线中自动解析最新已发布的 runtime packages patch 版本。
+Python SDK `0.7.4` 默认固定到独立版本的 LuaSkills core `v0.7.4`，并从兼容的 `0.1` 协议线中自动解析最新已发布的 runtime packages patch 版本。
 
 ## 版本对齐
 
 - SDK 补丁版本与核心版本独立；使用包内生成契约要求的精确核心版本。
-- 本源码默认指向 LuaSkills core 标签 `v0.7.3`。
+- 本源码默认指向 LuaSkills core 标签 `v0.7.4`。
 - runtime packages 与 native deps 仍然来自拆分后的 `LuaSkills/luaskills-packages` 及相关发布资产。
 - SDK 默认 host options 传入 `runtime_root`、两个空的受管根覆盖槽与完整稳定的 `managed_runtime_config`；宿主未显式覆盖时，LuaSkills 会推导固定数据布局。
 - 宿主工具直接放在 `runtime_root/bin`，不再放到 `runtime_root/bin/tools`。
