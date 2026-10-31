@@ -53,6 +53,11 @@ jobs:
               raise SystemExit('expected exactly one wheel and one source distribution')
           subprocess.run([sys.executable, 'scripts/verify_embedded_distribution.py',
                           '--wheel', str(wheels[0]), '--sdist', str(sources[0])], check=True)
+      # Release orchestration uses Python 3.14 independently of the SDK consumer's 3.10 compatibility above.
+      # 发布编排使用 Python 3.14，与上方 SDK 消费者的 3.10 兼容验证相互独立。
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: '3.14'
       # Reuse the release helper's pinned backend requirements for real wheel/sdist readiness fixtures.
       # 复用发布助手固定的后端依赖，构造真实 wheel/sdist 就绪夹具。
       - name: Install release fixture tools from their sole authority
