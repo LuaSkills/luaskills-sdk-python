@@ -53,3 +53,22 @@ jobs:
               raise SystemExit('expected exactly one wheel and one source distribution')
           subprocess.run([sys.executable, 'scripts/verify_embedded_distribution.py',
                           '--wheel', str(wheels[0]), '--sdist', str(sources[0])], check=True)
+      # Reuse the release helper's pinned backend requirements for real wheel/sdist readiness fixtures.
+      # 复用发布助手固定的后端依赖，构造真实 wheel/sdist 就绪夹具。
+      - name: Install release fixture tools from their sole authority
+        shell: python
+        run: |
+          import subprocess
+          import sys
+          # Tool names come from the production authority, so CI cannot silently diverge from release packaging.
+          # 工具名称来自生产权威，避免 CI 与发布打包悄然分歧。
+          requirements = subprocess.check_output([sys.executable, 'scripts/release/sdk_release.py',
+                                                 'tool-requirements'], text=True).split()
+          subprocess.run([sys.executable, '-m', 'pip', 'install', *requirements], check=True)
+      - name: Verify bounded visibility and strict partial distribution checks
+        run: >-
+          python tests/test_sdk_release.py
+          ReleaseGateTests.test_publication_waits_for_version_and_both_validated_distributions
+          ReleaseGateTests.test_publication_readiness_deadline_bounds_requests_without_mutation
+          ReleaseGateTests.test_publication_readiness_rejects_conflicting_partial_bytes
+          ReleaseGateTests.test_publication_readiness_rejects_other_http_errors_immediately

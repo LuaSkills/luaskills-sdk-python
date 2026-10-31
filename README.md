@@ -590,6 +590,8 @@ PYTHONPATH=src python -m luaskills.cli version --runtime-root D:/runtime/luaskil
 
 ## Publishing
 
+Upload acknowledgement can precede visibility of the exact PyPI version or one of its separately uploaded wheel/sdist files. Publication verification waits read-only for up to 600 seconds at five-second intervals. Every visible file must immediately match its name, version, origin, size, digest and non-yanked status; both must match before the existing cold-download and independent installation gates run. Authorization, service and conflicting-content failures remain fatal. Waiting never uploads again; a deadline failure retains the original signed candidate for explicit recovery. Push and pull-request CI exercise these regressions on three operating systems and the minimum/current supported Python versions.
+
 `pyproject.toml`'s `project.version` is the SDK version authority; `VERSION` must match its mirror. The explicit core tag/commit is independent of the SDK version and must match the packaged default runtime asset tag.
 
 For one unified ecosystem release, publish `LuaSkills/luaskills-packages` first, then publish `LuaSkills/luaskills`, so the default runtime installer assets for this SDK already exist.

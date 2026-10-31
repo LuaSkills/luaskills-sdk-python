@@ -36,6 +36,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 import urllib.request
 import urllib.error
 import urllib.parse
@@ -45,6 +46,12 @@ import zipfile
 # Evidence version belongs to this SDK workflow, independently of the core manifest schema.
 # 凭证版本属于此 SDK 工作流，独立于核心清单结构版本。
 SCHEMA = 1
+# A successful upload can precede public metadata; bound readiness separately from native acceptance.
+# 上传成功可能先于公共元数据可见；独立于原生验收约束就绪等待。
+PUBLICATION_VISIBILITY_TIMEOUT_SECONDS = 600
+# Poll only official version metadata and preserve all existing artifact identity checks.
+# 仅轮询官方版本元数据，并保留全部既有产物身份检查。
+PUBLICATION_VISIBILITY_POLL_SECONDS = 5
 # Public SDK publication ownership is fixed, independently of the core repository.
 # 公共 SDK 发布归属固定，独立于核心仓库。
 SDK_REPOSITORY = "LuaSkills/luaskills-sdk-python"
@@ -628,6 +635,49 @@ def download_pypi_artifact(record, expected):
     return body
 
 
+def published_pypi_records(plan, artifacts):
+    """Wait for both acknowledged distributions; return strictly verified records or fail within ten minutes.
+    等待两个已确认上传的分发文件；返回严格核验的记录，或在十分钟内失败。
+    plan and artifacts are the accepted frozen identity; only an exact metadata 404 or a validated subset may wait.
+    plan 与 artifacts 是已验收的冻结身份；仅精确元数据 404 或已核验子集允许等待。
+    """
+    # The same exact-version authority is used for every observation, without mirror or version fallback.
+    # 每次观测均使用同一精确版本权威，不切换镜像或回退版本。
+    version_url = f"https://pypi.org/pypi/{plan['name']}/{plan['sdk_version']}/json"
+    # One monotonic deadline caps every request and polling interval.
+    # 单一单调截止时间约束每次请求及轮询间隔。
+    deadline = time.monotonic() + PUBLICATION_VISIBILITY_TIMEOUT_SECONDS
+    while True:
+        # Remaining time prevents the final HTTP request from extending the visibility budget.
+        # 剩余时间防止最后一次 HTTP 请求延长可见性预算。
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError(f"Published PyPI distributions are not both visible within {PUBLICATION_VISIBILITY_TIMEOUT_SECONDS}s: {version_url}; retain the original candidate and recover without repacking")
+        try:
+            with urllib.request.urlopen(urllib.request.Request(version_url, headers={"Cache-Control": "no-cache"}),
+                                        timeout=min(60, remaining)) as response:
+                # The registry may expose the wheel before the separately uploaded sdist; every visible record must match.
+                # 注册表可能先展示 wheel，再展示独立上传的 sdist；每个已可见记录都必须匹配。
+                document = json.load(response)
+            # Partial visibility is an existing protocol state, never permission to accept conflicting or yanked bytes.
+            # 部分可见是既有协议状态，绝不允许接收冲突或已撤销字节。
+            records = pypi_records(plan, artifacts, document, allow_partial=True)
+            if set(records) == set(artifacts):
+                return pypi_records(plan, artifacts, document)
+        except urllib.error.HTTPError as error:
+            # Only a missing exact version is pending; file, permission and service errors remain fatal.
+            # 仅精确版本缺失表示尚未就绪；文件、权限及服务错误仍然致命。
+            pending = error.code == 404 and error.url == version_url
+            error.close()
+            if not pending:
+                raise
+        # No upload operation is reachable from readiness; recovery must keep the original signed distributions.
+        # 就绪等待无法执行上传；恢复必须保留原始签名分发文件。
+        remaining = deadline - time.monotonic()
+        if remaining > 0:
+            time.sleep(min(PUBLICATION_VISIBILITY_POLL_SECONDS, remaining))
+
+
 def verify_pypi(args):
     """Cold-download args' exact official PyPI bytes and independently install/accept them; return proof.
     冷下载 args 的精确正式 PyPI 字节并独立安装验收；返回证明。
@@ -637,9 +687,7 @@ def verify_pypi(args):
     plan, artifacts, inputs = aggregate["plan"], aggregate["artifacts"], read_json(args.inputs)
     require(inputs["platform"] in plan["platforms"] and inputs["source_commit"] == plan["core_commit"]
             and inputs["core_version"] == plan["core_version"], "Published consumer core identity mismatch")
-    with urllib.request.urlopen(urllib.request.Request(f"https://pypi.org/pypi/{plan['name']}/{plan['sdk_version']}/json",
-                                                    headers={"Cache-Control": "no-cache"}), timeout=60) as response:
-        records = pypi_records(plan, artifacts, json.load(response))
+    records = published_pypi_records(plan, artifacts)
     require(not args.output.exists(), "PyPI output must be new")
     args.output.mkdir(parents=True)
     for kind, record in records.items():

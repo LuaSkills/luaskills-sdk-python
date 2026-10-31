@@ -30,6 +30,36 @@ SPEC.loader.exec_module(release)
 
 
 
+class PublicationClock:
+    """Advance only through controlled polling sleeps, without delaying the test process.
+    仅通过受控轮询等待推进时间，不延迟测试进程。
+    """
+
+    def __init__(self):
+        """Initialize elapsed seconds and sleep history; return the test clock.
+        初始化经过秒数及等待历史；返回测试时钟。
+        """
+        # Now is independent of wall-clock scheduling.
+        # 当前时间独立于墙钟调度。
+        self.now = 0.0
+        # Sleeps captures the exact intervals requested by production readiness.
+        # 等待记录捕获生产就绪逻辑请求的精确间隔。
+        self.sleeps = []
+
+    def monotonic(self):
+        """Return current controlled seconds without advancing time.
+        返回当前受控秒数，不推进时间。
+        """
+        return self.now
+
+    def sleep(self, seconds):
+        """Record seconds and advance by that interval; return nothing.
+        记录秒数并据此推进时间；无返回值。
+        """
+        self.sleeps.append(seconds)
+        self.now += seconds
+
+
 class TimeoutDiagnosticsTests(unittest.TestCase):
     """Verify binary partial output and silent timeouts with real subprocess exceptions.
     使用真实子进程异常核验二进制部分输出及无输出超时。
@@ -364,6 +394,109 @@ class ReleaseGateTests(unittest.TestCase):
         response["urls"].append(copy.deepcopy(response["urls"][0]))
         with self.assertRaises(ValueError):
             release.pypi_records(self.plan, self.artifacts, response)
+
+    def published_response(self):
+        """Return exact-version metadata derived from this fixture's actual wheel and sdist bytes.
+        返回根据此夹具真实 wheel 与 sdist 字节派生的精确版本元数据。
+        """
+        return {"info": {"name": self.plan["name"], "version": self.plan["sdk_version"]},
+                "urls": [{"filename": record["filename"], "size": record["size"],
+                          "digests": {"sha256": record["sha256"]}, "yanked": False,
+                          "packagetype": "bdist_wheel" if kind == "wheel" else "sdist",
+                          "url": "https://files.pythonhosted.org/packages/" + record["filename"]}
+                         for kind, record in self.artifacts.items()]}
+
+    def test_publication_waits_for_version_and_both_validated_distributions(self):
+        """Require both separately uploaded artifacts after initial 404 and a valid subset; return no partial success.
+        初始 404 及合法子集之后，要求两个独立上传产物均可见；不得返回部分成功。
+        """
+        # Exact metadata route is the only allowed polling target.
+        # 精确元数据路由是唯一允许的轮询目标。
+        url = f"https://pypi.org/pypi/{self.plan['name']}/{self.plan['sdk_version']}/json"
+        # Controlled time makes the asynchronous publication sequence deterministic.
+        # 受控时间使异步发布序列具有确定性。
+        clock = PublicationClock()
+        # The partial response contains one fully matching distribution, not a relaxed hash fixture.
+        # 部分响应包含一个完全匹配的分发文件，并未放宽摘要夹具。
+        partial = self.published_response()
+        partial["urls"] = partial["urls"][:1]
+        # External response sequence models absence, partial publication and complete publication.
+        # 外部响应序列模拟缺失、部分发布及完整发布。
+        responses = [urllib.error.HTTPError(url, 404, "pending", {}, io.BytesIO()),
+                     io.BytesIO(json.dumps(partial).encode()), io.BytesIO(json.dumps(self.published_response()).encode())]
+        with patch.object(release.urllib.request, "urlopen", side_effect=responses) as request, \
+                patch.object(release.time, "monotonic", clock.monotonic), patch.object(release.time, "sleep", clock.sleep):
+            records = release.published_pypi_records(self.plan, self.artifacts)
+        self.assertEqual(set(records), {"wheel", "sdist"})
+        self.assertEqual(clock.sleeps, [5, 5])
+        self.assertEqual(request.call_count, 3)
+        for call in request.call_args_list:
+            self.assertEqual(call.args[0].full_url, url)
+            self.assertEqual(call.args[0].get_header("Cache-control"), "no-cache")
+            self.assertLessEqual(call.kwargs["timeout"], 60)
+
+    def test_publication_readiness_deadline_bounds_requests_without_mutation(self):
+        """Bound missing metadata and incomplete publication to the same deadline without downloads or uploads.
+        对缺失元数据及不完整发布使用相同截止时间，不进行下载或上传。
+        """
+        # Version route and valid subset both preserve the original authority.
+        # 版本路由及合法子集均保留原始权威。
+        url = f"https://pypi.org/pypi/{self.plan['name']}/{self.plan['sdk_version']}/json"
+        partial = self.published_response()
+        partial["urls"] = partial["urls"][:1]
+        for missing in (False, True):
+            with self.subTest(missing=missing):
+                # Each case has an independent deterministic seven-second budget.
+                # 每种情况具有独立、确定性的七秒预算。
+                clock = PublicationClock()
+                # Two requests exhaust the budget; neither path may manufacture a complete record set.
+                # 两次请求耗尽预算；两条路径均不得伪造完整记录集。
+                responses = ([urllib.error.HTTPError(url, 404, "pending", {}, io.BytesIO()) for _ in range(2)]
+                             if missing else [io.BytesIO(json.dumps(partial).encode()) for _ in range(2)])
+                with patch.object(release.urllib.request, "urlopen", side_effect=responses) as request, \
+                        patch.object(release.time, "monotonic", clock.monotonic), patch.object(release.time, "sleep", clock.sleep), \
+                        patch.object(release, "PUBLICATION_VISIBILITY_TIMEOUT_SECONDS", 7), \
+                        patch.object(release, "download_pypi_artifact") as download, patch.object(release, "run") as process, \
+                        self.assertRaisesRegex(TimeoutError, "not both visible within 7s"):
+                    release.published_pypi_records(self.plan, self.artifacts)
+                self.assertEqual(clock.sleeps, [5, 2])
+                self.assertEqual([call.kwargs["timeout"] for call in request.call_args_list], [7, 2])
+                download.assert_not_called()
+                process.assert_not_called()
+
+    def test_publication_readiness_rejects_conflicting_partial_bytes(self):
+        """Reject a visible but conflicting subset immediately instead of waiting for it to change.
+        立即拒绝已可见但冲突的子集，而不等待其发生变化。
+        """
+        # A mismatching hash is never an eventually consistent publication state.
+        # 摘要不匹配绝不属于最终一致的发布状态。
+        partial = self.published_response()
+        partial["urls"] = partial["urls"][:1]
+        partial["urls"][0]["digests"]["sha256"] = "0" * 64
+        with patch.object(release.urllib.request, "urlopen", return_value=io.BytesIO(json.dumps(partial).encode())) as request, \
+                patch.object(release.time, "sleep") as sleep, self.assertRaisesRegex(ValueError, "differ from tested"):
+            release.published_pypi_records(self.plan, self.artifacts)
+        request.assert_called_once()
+        sleep.assert_not_called()
+
+    def test_publication_readiness_rejects_other_http_errors_immediately(self):
+        """Keep permission, service and other-route failures fatal without a readiness retry.
+        权限、服务及其他路由失败仍立即致命，不进行就绪重试。
+        """
+        # Only the exact version URL may report pending visibility.
+        # 仅精确版本 URL 可以报告尚未可见。
+        url = f"https://pypi.org/pypi/{self.plan['name']}/{self.plan['sdk_version']}/json"
+        for code, endpoint in ((403, url), (503, url), (404, url + "/wrong")):
+            with self.subTest(code=code, endpoint=endpoint):
+                # Preserve the original HTTP error while closing its response body.
+                # 保留原始 HTTP 错误，同时关闭其响应正文。
+                error = urllib.error.HTTPError(endpoint, code, "unit failure", {}, io.BytesIO())
+                with patch.object(release.urllib.request, "urlopen", side_effect=error) as request, \
+                        patch.object(release.time, "sleep") as sleep, self.assertRaises(urllib.error.HTTPError) as caught:
+                    release.published_pypi_records(self.plan, self.artifacts)
+                self.assertIs(caught.exception, error)
+                request.assert_called_once()
+                sleep.assert_not_called()
 
     def test_existing_assets_equal_reuse_and_changed_refusal(self):
         """Reuse equal existing bytes and reject every replacement; return nothing.
