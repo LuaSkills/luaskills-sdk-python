@@ -6,7 +6,7 @@ Main LuaSkills repository: [LuaSkills/luaskills](https://github.com/LuaSkills/lu
 
 Python SDK for integrating the LuaSkills runtime through the public JSON FFI surface.
 
-This source aligns with released LuaSkills core `0.8.1`. SQLite is registered and managed by the host; runtime installers fetch only the core and Lua assets.
+This source aligns with released LuaSkills core `0.8.2`. SQLite is registered and managed by the host; runtime installers fetch only the core and Lua assets.
 
 The SDK wraps native library loading, JSON FFI buffers, engine lifecycle, formal skill roots, authority-aware management calls, skill config, provider callbacks, host-tool callbacks, and runtime asset installation. Hosts should not need to hand-write low-level FFI buffers or JSON envelopes for normal integration.
 
@@ -39,7 +39,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/deps/sync_runtime_as
 RUNTIME_ROOT=/opt/luaskills scripts/deps/sync_runtime_assets.sh all
 ```
 
-Sync script targets are `all`, `luaskills`, and `lua`, with core `v0.8.1`. CLI database presets are only `none` and `host-callback`; the latter sets `sqlite_callback_mode: json` and still requires host registration.
+Sync script targets are `all`, `luaskills`, and `lua`, with core `v0.8.2`. CLI database presets are only `none` and `host-callback`; the latter sets `sqlite_callback_mode: json` and still requires host registration.
 
 `install-runtime` downloads GitHub Release assets, verifies `.sha256` sidecars, extracts native files and Lua runtime packages, and writes:
 
@@ -113,12 +113,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/deps/fetch_managed_r
 python scripts/debug-tools/managed_runtime_layout_check.py D:\VulcanCodeData\luaskills --distribution-root D:\VulcanCode\dependencies\runtimes --environment-root D:\VulcanCodeData\managed-runtime-envs
 ```
 
-Python SDK `0.8.1` pins LuaSkills core to the independently versioned `v0.8.1` and resolves runtime packages from the compatible `0.1` series by selecting the newest published patch automatically.
+Python SDK `0.8.2` pins LuaSkills core to the independently versioned `v0.8.2` and resolves runtime packages from the compatible `0.1` series by selecting the newest published patch automatically.
 
 ## Version Alignment
 
 - SDK patch versions and core versions are independent; use the exact core version required by the packaged generated contract.
-- This source defaults to LuaSkills core tag `v0.8.1`.
+- This source defaults to LuaSkills core tag `v0.8.2`.
 - Runtime packages and native dependencies still come from the split `LuaSkills/luaskills-packages` and related release assets.
 - SDK default host options pass `runtime_root`, null managed-root override slots, and the complete stable `managed_runtime_config`; LuaSkills derives the fixed data layout until the host explicitly overrides roots or policy.
 - Host tools live directly under `runtime_root/bin`, not `runtime_root/bin/tools`.

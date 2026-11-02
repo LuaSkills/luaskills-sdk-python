@@ -1,5 +1,5 @@
-"""Run a real host-owned SQLite round trip through LuaSkills 0.8.1.
-通过 LuaSkills 0.8.1 执行真实宿主 SQLite 往返验证。
+"""Run a real host-owned SQLite round trip through LuaSkills 0.8.2.
+通过 LuaSkills 0.8.2 执行真实宿主 SQLite 往返验证。
 """
 from __future__ import annotations
 
