@@ -11,7 +11,7 @@ import sys
 from typing import Any, cast, get_args
 
 from .embedded_contract import (
-    EMBEDDED_CONTRACT_SHA256, EMBEDDED_CORE_VERSION, EMBEDDED_DESCRIPTION_VERSION,
+    EMBEDDED_CONTRACT_SHA256, EMBEDDED_CORE_SERIES, EMBEDDED_DESCRIPTION_VERSION,
     EMBEDDED_PROTOCOL_VERSION, EMBEDDED_REQUIRED_CAPABILITIES, EMBEDDED_ROOT_COMMANDS,
     EMBEDDED_RUNTIME_COMMANDS, OutputCoreDescription, OutputEmbeddedBuildIdentity, OutputExecutionBackend,
 )
@@ -37,6 +37,19 @@ def _names(value: Any, field: str) -> set[str]:
     return set(value)
 
 
+def core_version_series(version: Any) -> str | None:
+    """
+    Return the `major.minor` series of an exact `major.minor.patch` core version, or None for any other value.
+    返回精确 `major.minor.patch` 核心版本的 `major.minor` 系列；其他值返回 None。
+    Pre-release, build metadata, leading zeros and non-text values never match a series.
+    预发布、构建元数据、前导零及非文本值永不匹配任何系列。
+    """
+    if type(version) is not str:
+        return None
+    match = re.fullmatch(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", version)
+    return None if match is None else f"{match[1]}.{match[2]}"
+
+
 def decode_core_description(encoded: bytes) -> OutputCoreDescription:
     """
     Decode copied bytes, validate generated requirements and process ABI, and return an independent description.
@@ -56,10 +69,14 @@ def decode_core_description(encoded: bytes) -> OutputCoreDescription:
         ("description_version", EMBEDDED_DESCRIPTION_VERSION),
         ("protocol_version", EMBEDDED_PROTOCOL_VERSION),
         ("abi_structure_version", EMBEDDED_PROTOCOL_VERSION),
-        ("core_version", EMBEDDED_CORE_VERSION),
     ):
         if type(value[name]) is not type(expected) or value[name] != expected:
             raise EmbeddedCompatibilityError(f"native {name} mismatch: expected {expected!r}, received {value[name]!r}")
+    # Any exact patch of the contract's series is accepted; the contract digest below proves identical wire shapes.
+    # 接受契约系列内的任意精确补丁版本；下方契约摘要证明线形状完全一致。
+    if core_version_series(value["core_version"]) != EMBEDDED_CORE_SERIES:
+        raise EmbeddedCompatibilityError(
+            f"native core_version mismatch: expected series {EMBEDDED_CORE_SERIES!r}, received {value['core_version']!r}")
     for name, required in (
         ("commands", EMBEDDED_ROOT_COMMANDS),
         ("runtime_commands", EMBEDDED_RUNTIME_COMMANDS),

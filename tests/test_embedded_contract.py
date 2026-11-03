@@ -56,7 +56,7 @@ class EmbeddedContractTests(unittest.TestCase):
         subprocess.run([sys.executable, str(GENERATOR_PATH), "--check"], check=True)
         self.assertEqual(contract.EMBEDDED_CONTRACT_SHA256, hashlib.sha256(self.encoded).hexdigest())
         self.assertEqual(contract.EMBEDDED_PROTOCOL_VERSION, self.document["protocol_version"])
-        self.assertEqual(contract.EMBEDDED_CORE_VERSION, self.document["core_version"])
+        self.assertEqual(contract.EMBEDDED_CORE_SERIES, self.document["core_series"])
         self.assertEqual(contract.EMBEDDED_DESCRIPTION_VERSION, self.document["compatibility"]["description_version"])
         self.assertEqual(contract.EMBEDDED_DESCRIPTION_MAX_BYTES, self.document["compatibility"]["max_description_bytes"])
         self.assertEqual(list(contract.EMBEDDED_REQUIRED_CAPABILITIES), self.document["compatibility"]["required_capabilities"])
@@ -143,6 +143,16 @@ class EmbeddedContractTests(unittest.TestCase):
         del broken["error_response"]["$defs"]["EmbeddedError"]
         with self.assertRaisesRegex(ValueError, "independent root"):
             GENERATOR.generate(broken, self.encoded)
+        # The contract names only a `major.minor` series; an exact version or missing series stops generation.
+        # 契约只给出 `major.minor` 系列；精确版本或缺少系列都会停止生成。
+        for series in (None, "0.9.0", "v0.9", "09.1", 9):
+            with self.subTest(core_series=series):
+                broken = copy.deepcopy(self.document)
+                broken["core_series"] = series
+                if series is None:
+                    del broken["core_series"]
+                with self.assertRaisesRegex(ValueError, "core_series"):
+                    GENERATOR.generate(broken, self.encoded)
 
     def test_conflicting_definitions_and_generated_names_are_rejected(self) -> None:
         """

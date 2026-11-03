@@ -9,6 +9,7 @@ import argparse
 import hashlib
 import json
 import keyword
+import re
 from pathlib import Path
 from typing import Any
 
@@ -342,6 +343,19 @@ class PythonTypes:
             ])
 
 
+def core_series(document: dict[str, Any]) -> str:
+    """
+    Return the contract's core release series (`major.minor`) shared by every patch that keeps these bytes.
+    返回契约的核心发布系列（`major.minor`），保持这些字节的全部补丁版本共享该系列。
+    Reject a missing or malformed series instead of guessing it from another field.
+    缺失或格式错误的系列直接拒绝，不从其他字段推测。
+    """
+    series = document.get("core_series")
+    if type(series) is not str or re.fullmatch(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", series) is None:
+        raise ValueError(f"invalid embedded contract core_series: {series!r}")
+    return series
+
+
 def generate(document: dict[str, Any], encoded: bytes) -> bytes:
     """
     Generate all request/response types and metadata from document and its original encoded bytes.
@@ -408,7 +422,7 @@ def generate(document: dict[str, Any], encoded: bytes) -> bytes:
     for name, value in {
         "EMBEDDED_PROTOCOL_VERSION": document["protocol_version"],
         "EMBEDDED_CONTRACT_VERSION": document["contract_version"],
-        "EMBEDDED_CORE_VERSION": document["core_version"],
+        "EMBEDDED_CORE_SERIES": core_series(document),
         "EMBEDDED_CONTRACT_SHA256": hashlib.sha256(encoded).hexdigest(),
         "EMBEDDED_DESCRIPTION_VERSION": document["compatibility"]["description_version"],
         "EMBEDDED_DESCRIPTION_MAX_BYTES": document["compatibility"]["max_description_bytes"],

@@ -6,7 +6,7 @@ LuaSkills 主仓库：[LuaSkills/luaskills](https://github.com/LuaSkills/luaskil
 
 Python SDK，用于通过公共 JSON FFI 接入 LuaSkills 运行时。
 
-此源码对齐已发布的 LuaSkills core `0.8.2`。SQLite 仅由宿主注册和管理；运行时安装器仅安装核心与 Lua 资源。
+此源码对齐 LuaSkills core `0.9` 系列（契约摘要一致的全部已发布 `0.9.x` 补丁版本）。SQLite 仅由宿主注册和管理；运行时安装器仅安装核心与 Lua 资源。
 
 SDK 封装了原生动态库加载、JSON FFI buffer、engine 生命周期、正式 skill root、带权限语义的管理调用、skill config、provider callback、宿主工具 callback 与 runtime 资产安装。宿主在常规集成中不需要手写底层 FFI buffer 或 JSON 包络。
 
@@ -39,7 +39,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/deps/sync_runtime_as
 RUNTIME_ROOT=/opt/luaskills scripts/deps/sync_runtime_assets.sh all
 ```
 
-同步脚本目标支持 `all`、`luaskills`、`lua`，默认核心版本为 `v0.8.2`。CLI 的数据库选项仅支持 `none` 与 `host-callback`；后者只设置 `sqlite_callback_mode: json`，仍需宿主注册。
+同步脚本目标支持 `all`、`luaskills`、`lua`。默认安装 `0.9` 系列（由包内契约给出）最新已发布的核心补丁版本；`-LuaSkillsVersion` / `LUASKILLS_VERSION` 可指定精确标签，但必须属于该系列。CLI 的数据库选项仅支持 `none` 与 `host-callback`；后者只设置 `sqlite_callback_mode: json`，仍需宿主注册。
 
 `install-runtime` 会下载 GitHub Release 资产、校验 `.sha256` 旁路文件、解压原生文件与 Lua runtime 包，并写入：
 
@@ -113,14 +113,17 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/deps/fetch_managed_r
 python scripts/debug-tools/managed_runtime_layout_check.py D:\VulcanCodeData\luaskills --distribution-root D:\VulcanCode\dependencies\runtimes --environment-root D:\VulcanCodeData\managed-runtime-envs
 ```
 
-Python SDK `0.8.2` 默认固定到独立版本的 LuaSkills core `v0.8.2`，并从兼容的 `0.1` 协议线中自动解析最新已发布的 runtime packages patch 版本。
+Python SDK `0.9.0` 从 `0.9` 系列解析 LuaSkills core，从兼容的 `0.1` 协议线解析 runtime packages，两者都自动选择最新已发布的补丁版本。
 
 ## 版本对齐
 
-- SDK 补丁版本与核心版本独立；使用包内生成契约要求的精确核心版本。
-- 本源码默认指向 LuaSkills core 标签 `v0.8.2`。
+- SDK 0.9.x 适用于嵌入式契约摘要与包内契约一致的全部 LuaSkills core 0.9.x 补丁版本；核心补丁版本无需发布新 SDK。
+- `DEFAULT_LUASKILLS_SERIES` 为 `0.9`。`install-runtime` 与同步脚本选择最新已发布（非草稿、非预发布）的 `v0.9.Z` 标签；显式 `--luaskills-version` 必须是 `v0.9.Z` 标签。解压后归档内 `contracts/embedded/v1/contract.sha256` 必须等于 `EMBEDDED_CONTRACT_SHA256`，否则安装失败，且不会尝试其他发布。
+- 启动时动态库报告的 `core_version` 必须是精确的 `0.9.Z`，且 `build.contract_sha256` 必须等于包内契约摘要。
+- 新的核心次版本系列（契约变化）需要发布新的 SDK 次版本。
 - runtime packages 与 native deps 仍然来自拆分后的 `LuaSkills/luaskills-packages` 及相关发布资产。
 - SDK 默认 host options 传入 `runtime_root`、两个空的受管根覆盖槽与完整稳定的 `managed_runtime_config`；宿主未显式覆盖时，LuaSkills 会推导固定数据布局。
+- `preserve_host_writable_dirs`（默认 `false`）保留宿主设置的 `temp_dir` 与 `download_cache_root`，不再从 `runtime_root` 推导，使只读运行时根不接收临时文件或下载内容；此时两个路径均为必填。见 `examples/read_only_runtime_root.py`。
 - 宿主工具直接放在 `runtime_root/bin`，不再放到 `runtime_root/bin/tools`。
 
 ```powershell

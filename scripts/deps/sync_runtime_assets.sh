@@ -13,9 +13,11 @@ TARGET="${1:-all}"
 # RuntimeRoot receives all synchronized assets.
 # RuntimeRoot 接收全部同步资产。
 RUNTIME_ROOT="${RUNTIME_ROOT:-output}"
-# LuaSkillsVersion stores the exact LuaSkills release tag.
-# LuaSkillsVersion 保存精确的 LuaSkills 发布标签。
-LUASKILLS_VERSION="${LUASKILLS_VERSION:-v0.8.2}"
+# LuaSkillsVersion optionally stores an exact LuaSkills release tag; empty selects the newest published patch
+# of the core series named by the SDK's embedded contract. An explicit tag must belong to that series.
+# LuaSkillsVersion 可选保存精确 LuaSkills 发布标签；为空时选择 SDK 嵌入式契约所指核心系列最新已发布的补丁版本。
+# 显式标签必须属于该系列。
+LUASKILLS_VERSION="${LUASKILLS_VERSION:-}"
 
 case "$TARGET" in
   all|luaskills)

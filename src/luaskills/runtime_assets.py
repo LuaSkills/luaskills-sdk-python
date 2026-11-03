@@ -23,12 +23,22 @@ from enum import Enum
 from pathlib import Path, PureWindowsPath
 from typing import Any, Callable, Iterator
 
+from .embedded_contract import EMBEDDED_CONTRACT_SHA256
 from .roots import normalized_path
 
-DEFAULT_LUASKILLS_VERSION = "v0.8.2"
+DEFAULT_LUASKILLS_SERIES = "0.9"
 """
-Default LuaSkills release tag used by SDK runtime installation.
-SDK 运行时安装使用的默认 LuaSkills 发布标签。
+LuaSkills core release series (`major.minor`) installed by default; it equals the packaged contract's
+`EMBEDDED_CORE_SERIES`. Installation resolves the newest published `vX.Y.Z` tag of this series and accepts
+its FFI archive only when the archive's contract digest equals `EMBEDDED_CONTRACT_SHA256`.
+默认安装的 LuaSkills core 发布系列（`major.minor`），等于包内契约的 `EMBEDDED_CORE_SERIES`。安装时解析该系列
+最新已发布的 `vX.Y.Z` 标签，并仅在 FFI 归档的契约摘要等于 `EMBEDDED_CONTRACT_SHA256` 时接受该归档。
+"""
+
+LUASKILLS_FFI_CONTRACT_DIGEST_MEMBER = "contracts/embedded/v1/contract.sha256"
+"""
+Archive-relative path of the embedded contract digest inside `luaskills-ffi-sdk-<platform>.tar.gz`.
+`luaskills-ffi-sdk-<platform>.tar.gz` 内嵌入式契约摘要的归档相对路径。
 """
 
 DEFAULT_LUASKILLS_PACKAGES_SERIES = "0.1"
@@ -168,7 +178,7 @@ def build_runtime_install_manifest(
     *,
     runtime_root: str | os.PathLike[str],
     database: RuntimeDatabasePreset | str = RuntimeDatabasePreset.NONE,
-    luaskills_version: str = DEFAULT_LUASKILLS_VERSION,
+    luaskills_version: str | None = None,
     lua_runtime_version: str | None = None,
     lua_runtime_series: str = DEFAULT_LUASKILLS_PACKAGES_SERIES,
     include_luaskills_ffi: bool = True,
@@ -185,18 +195,24 @@ def build_runtime_install_manifest(
     """
     Build one deterministic runtime installation manifest.
     构造一个确定性的运行时安装清单。
+    `luaskills_version` omitted selects the newest published core patch of `DEFAULT_LUASKILLS_SERIES`;
+    an explicit tag must belong to that series.
+    省略 `luaskills_version` 时选择 `DEFAULT_LUASKILLS_SERIES` 最新已发布的核心补丁版本；显式标签必须属于该系列。
     """
 
     resolved_root = Path(runtime_root).expanduser().resolve()
     preset = normalize_database_preset(database)
     target = resolve_runtime_platform_target()
+    resolved_luaskills_version = luaskills_version or ""
+    if include_luaskills_ffi:
+        resolved_luaskills_version = resolve_luaskills_core_tag(luaskills_repo, luaskills_version)
     resolved_lua_runtime_version = lua_runtime_version or resolve_release_tag_for_series(
         lua_runtime_repo or "LuaSkills/luaskills-packages",
         lua_runtime_series,
     )
     assets = build_runtime_asset_descriptors(
         target=target,
-        luaskills_version=luaskills_version,
+        luaskills_version=resolved_luaskills_version,
         include_luaskills_ffi=include_luaskills_ffi,
         include_lua_runtime=include_lua_runtime,
         luaskills_repo=luaskills_repo,
@@ -555,6 +571,26 @@ def resolve_release_tag_for_series(repository: str, series: str) -> str:
         raise ValueError(f"no published release found in series {series} for {repository}")
     candidates.sort(key=lambda item: item[0], reverse=True)
     return candidates[0][1]
+
+
+def resolve_luaskills_core_tag(repository: str, explicit_tag: str | None) -> str:
+    """
+    Return the explicit core tag after checking it belongs to `DEFAULT_LUASKILLS_SERIES`,
+    or resolve the newest published tag of that series when no tag is given.
+    显式核心标签经检查属于 `DEFAULT_LUASKILLS_SERIES` 后原样返回；未给出标签时解析该系列最新已发布标签。
+    A tag outside the series raises ValueError; there is no fallback to another series or older release.
+    系列外标签抛出 ValueError；不回退到其他系列或更旧的发布。
+    """
+
+    if explicit_tag is None or explicit_tag == "":
+        return resolve_release_tag_for_series(repository, DEFAULT_LUASKILLS_SERIES)
+    match = re.fullmatch(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", explicit_tag)
+    if match is None or f"{match[1]}.{match[2]}" != DEFAULT_LUASKILLS_SERIES:
+        raise ValueError(
+            f"LuaSkills core tag {explicit_tag!r} is outside the SDK core series {DEFAULT_LUASKILLS_SERIES}; "
+            f"expected an exact tag v{DEFAULT_LUASKILLS_SERIES}.<patch>"
+        )
+    return explicit_tag
 
 
 def parse_release_semver(tag: str) -> tuple[int, int, int] | None:
@@ -1194,8 +1230,11 @@ def install_luaskills_ffi(runtime_root: Path, extract_directory: Path, target: d
     """
     Install a LuaSkills FFI SDK archive into runtime include/libs/licenses directories.
     将 LuaSkills FFI SDK 归档安装到 runtime include/libs/licenses 目录。
+    The archive's embedded contract digest is checked before any file reaches the runtime root.
+    在任何文件进入运行时根之前检查归档的嵌入式契约摘要。
     """
 
+    verify_luaskills_ffi_contract(extract_directory, asset)
     copy_directory_if_present(extract_directory / "include", runtime_root / "include")
     copy_directory_if_present(extract_directory / "lib", runtime_root / "libs")
     copy_directory_if_present(extract_directory / "licenses", runtime_root / "licenses" / "luaskills-ffi")
@@ -1207,6 +1246,30 @@ def install_luaskills_ffi(runtime_root: Path, extract_directory: Path, target: d
 
 
 
+
+
+def verify_luaskills_ffi_contract(extract_directory: Path, asset: dict[str, Any]) -> None:
+    """
+    Require the extracted FFI archive's contract digest to equal the SDK's generated `EMBEDDED_CONTRACT_SHA256`.
+    要求已解压 FFI 归档的契约摘要等于 SDK 生成的 `EMBEDDED_CONTRACT_SHA256`。
+    A missing, malformed or different digest raises ValueError; no other release is tried.
+    缺失、格式错误或不同的摘要抛出 ValueError；不会尝试其他发布。
+    """
+
+    digest_path = extract_directory / LUASKILLS_FFI_CONTRACT_DIGEST_MEMBER
+    if not digest_path.is_file():
+        raise ValueError(f"{asset['asset_name']} ({asset['version']}) does not contain {LUASKILLS_FFI_CONTRACT_DIGEST_MEMBER}")
+    try:
+        fields = digest_path.read_text(encoding="utf-8").split()
+    except UnicodeDecodeError as error:
+        raise ValueError(f"{asset['asset_name']} ({asset['version']}) has an unreadable contract digest") from error
+    if len(fields) != 2 or fields[1] != "contract.json" or SHA256_HEX_PATTERN.match(fields[0]) is None:
+        raise ValueError(f"{asset['asset_name']} ({asset['version']}) has a malformed contract digest")
+    if fields[0].lower() != EMBEDDED_CONTRACT_SHA256:
+        raise ValueError(
+            f"LuaSkills core {asset['version']} embedded contract SHA-256 {fields[0].lower()} does not match "
+            f"this SDK's contract {EMBEDDED_CONTRACT_SHA256}; use an SDK release built for that core contract"
+        )
 
 
 def copy_directory_if_present(source: Path, destination: Path) -> None:

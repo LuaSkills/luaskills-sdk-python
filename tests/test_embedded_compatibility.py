@@ -67,6 +67,39 @@ class EmbeddedCompatibilityTests(unittest.TestCase):
                 native.description_bytes = json.dumps(value).encode()
                 self.assert_rejected(native)
 
+    def test_core_version_series_accepts_any_exact_patch_and_rejects_other_series(self):
+        """
+        Accept every exact patch of the contract series and reject other series or inexact versions before allocation.
+        接受契约系列内的任意精确补丁版本，并在分配前拒绝其他系列或非精确版本。
+        """
+        major, minor = (int(part) for part in contract.EMBEDDED_CORE_SERIES.split("."))
+        for version in (f"{major}.{minor}.0", f"{major}.{minor}.3", f"{major}.{minor}.117"):
+            with self.subTest(accepted=version):
+                native = NativeLibrary()
+                value = core_description()
+                value["core_version"] = version
+                native.description_bytes = json.dumps(value).encode()
+                with patch("luaskills.embedded_transport.ctypes.CDLL", return_value=native):
+                    transport = EmbeddedTransport(config(), library_path=Path(__file__))
+                try:
+                    self.assertEqual(transport.core_description["core_version"], version)
+                finally:
+                    transport.close()
+                    transport.free()
+        for version in (f"{major}.{minor + 1}.0", f"{major}.{minor - 1}.9" if minor else f"{major + 1}.0.0",
+                        f"{major + 1}.{minor}.0", f"{major}.{minor}", f"{major}.{minor}.0-rc.1",
+                        f"{major}.{minor}.01", f"v{major}.{minor}.0", f"{major}.{minor}.0+build", "", 0):
+            with self.subTest(rejected=version):
+                native = NativeLibrary()
+                value = core_description()
+                value["core_version"] = version
+                native.description_bytes = json.dumps(value).encode()
+                with patch("luaskills.embedded_transport.ctypes.CDLL", return_value=native):
+                    with self.assertRaisesRegex(EmbeddedCompatibilityError, "core_version mismatch"):
+                        EmbeddedTransport(config(), library_path=Path(__file__))
+                self.assertEqual(native.constructor_calls, 0)
+                self.assertFalse(native.allocations)
+
     def test_missing_fields_and_strict_json_are_rejected(self):
         """
         Cover all generated required fields plus malformed UTF-8, duplicate JSON keys and missing objects.

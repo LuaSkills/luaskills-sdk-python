@@ -64,6 +64,12 @@ python .\examples\runtime_lease.py
 python .\examples\provider_callback.py
 ```
 
+`read_only_runtime_root.py` 设置 `preserve_host_writable_dirs: true`，并把宿主创建的 `temp_dir` 与 `download_cache_root` 放在 `runtime_root` 之外，使运行时根可以保持只读（例如位于带版本号的应用目录中）。此时两个路径均为必填。示例还把 `managed_runtime_environment_root` 移出运行时根，并传入 `ensure_runtime_layout=False`，因此 `runtime_root` 之下不会写入任何内容。
+
+```powershell
+python .\examples\read_only_runtime_root.py
+```
+
 模型 callback 对接见主 [SDK README](../README_cn.md#模型-callback)。通用示例不直接调用真实模型 provider，因为模型凭证、provider 选择、预算与脱敏策略都归宿主管理。
 
 ## Wheel 示例
@@ -79,7 +85,7 @@ python -m luaskills.examples.embedded_runtime --library D:\candidate\luaskills.d
 精确分发产物对冻结原生候选的本地验收使用独立原生门禁。描述文件是候选实际 `luaskills_ffi_embedded_describe_v1` 返回的 JSON 字节；SDK 复用既有生成契约校验，并要求与已加载原生库完整描述一致：
 
 ```powershell
-python scripts/verify_embedded_native_distribution.py --wheel dist\luaskills_sdk-0.8.2-py3-none-any.whl --sdist dist\luaskills_sdk-0.8.2.tar.gz --library D:\candidate\luaskills.dll --library-sha256 <frozen-library-sha256> --description D:\candidate\core-description.json
+python scripts/verify_embedded_native_distribution.py --wheel dist\luaskills_sdk-0.9.0-py3-none-any.whl --sdist dist\luaskills_sdk-0.9.0.tar.gz --library D:\candidate\luaskills.dll --library-sha256 <frozen-library-sha256> --description D:\candidate\core-description.json
 ```
 
 wheel/sdist 名称必须使用本次构建的精确产物。门禁在缺库或身份错误时失败，执行既有离线分发校验；若本地已有 twine，额外执行 `twine check --strict`。它仅用本地已有构建工具重新构建选定 sdist，然后将两个 wheel 分别安装到独立 venv，排除用户 site 和源码目录导入。每个安装环境还执行真实启动拒绝、迟到启动中断、预留取消及未知交付回归；跳过原生测试不能通过此门禁。不会发布包或下载运行时。构建工具必须已满足 `pyproject.toml`，缺失本地后端时 sdist 构建失败。单平台通过不证明其它平台或正式发布库通过。

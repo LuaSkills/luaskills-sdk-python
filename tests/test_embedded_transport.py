@@ -28,7 +28,7 @@ def core_description():
     """
     return {
         "description_version": contract.EMBEDDED_DESCRIPTION_VERSION,
-        "core_version": contract.EMBEDDED_CORE_VERSION,
+        "core_version": contract.EMBEDDED_CORE_SERIES + ".0",
         "protocol_version": contract.EMBEDDED_PROTOCOL_VERSION,
         "abi_structure_version": contract.EMBEDDED_PROTOCOL_VERSION,
         "commands": list(contract.EMBEDDED_ROOT_COMMANDS),

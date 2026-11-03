@@ -22,13 +22,13 @@ EMBEDDED_PROTOCOL_VERSION = 1
 # 生成的契约元数据：EMBEDDED_CONTRACT_VERSION。
 EMBEDDED_CONTRACT_VERSION = 1
 
-# Generated contract metadata: EMBEDDED_CORE_VERSION.
-# 生成的契约元数据：EMBEDDED_CORE_VERSION。
-EMBEDDED_CORE_VERSION = '0.8.2'
+# Generated contract metadata: EMBEDDED_CORE_SERIES.
+# 生成的契约元数据：EMBEDDED_CORE_SERIES。
+EMBEDDED_CORE_SERIES = '0.9'
 
 # Generated contract metadata: EMBEDDED_CONTRACT_SHA256.
 # 生成的契约元数据：EMBEDDED_CONTRACT_SHA256。
-EMBEDDED_CONTRACT_SHA256 = '462afd7e67435f16fdbc4cb8a2304aa0d25d1e9b69f3be3b95afa30c68be91ab'
+EMBEDDED_CONTRACT_SHA256 = '3b0cf62cf4cb3953d62ac147605be9dfe1d3ad18f190e53fa548cfc70099ad64'
 
 # Generated contract metadata: EMBEDDED_DESCRIPTION_VERSION.
 # 生成的契约元数据：EMBEDDED_DESCRIPTION_VERSION。
@@ -872,6 +872,15 @@ class InputLuaRuntimeHostOptions(_InputLuaRuntimeHostOptionsRequired, total=Fals
     # Exact wire member official_skill_hub_base_url; omittable independently of nullability.
     # 精确线成员 official_skill_hub_base_url；可省略与是否可为空值相互独立。
     official_skill_hub_base_url: Union[str, None]
+    # Keep the host-set `temp_dir` and `download_cache_root` instead of deriving them from
+    # `runtime_root`, so a read-only runtime root never receives transient files or downloads.
+    # Both paths are then required; the host creates `temp_dir`, the engine creates the cache.
+    # 保留宿主设置的 `temp_dir` 与 `download_cache_root`，不再从 `runtime_root` 推导，
+    # 使只读运行时根绝不接收临时文件或下载内容。此时两个路径均为必填；宿主创建 `temp_dir`，
+    # 引擎创建下载缓存。
+    # Exact wire member preserve_host_writable_dirs; omittable independently of nullability.
+    # 精确线成员 preserve_host_writable_dirs；可省略与是否可为空值相互独立。
+    preserve_host_writable_dirs: bool
     # Host-controlled URL prefixes allowed for private skill manifests.
     # 宿主管控的私有技能 manifest 允许 URL 前缀。
     # Exact wire member private_skill_source_allowlist; omittable independently of nullability.

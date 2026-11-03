@@ -206,19 +206,29 @@ def publication_coordinator():
 
 
 def default_asset(source):
-    """Read the authoritative DEFAULT_LUASKILLS_VERSION literal from source bytes; return its tag.
-    从 source 字节读取权威 DEFAULT_LUASKILLS_VERSION 字面量；返回其标签。
+    """Read the authoritative DEFAULT_LUASKILLS_SERIES literal from source bytes; return its `major.minor` series.
+    从 source 字节读取权威 DEFAULT_LUASKILLS_SERIES 字面量；返回其 `major.minor` 系列。
     """
     values = [ast.literal_eval(node.value) for node in ast.parse(source).body
               if isinstance(node, ast.Assign)
-              and any(isinstance(target, ast.Name) and target.id == "DEFAULT_LUASKILLS_VERSION" for target in node.targets)]
-    require(len(values) == 1 and isinstance(values[0], str), "Default core asset authority is ambiguous")
+              and any(isinstance(target, ast.Name) and target.id == "DEFAULT_LUASKILLS_SERIES" for target in node.targets)]
+    require(len(values) == 1 and isinstance(values[0], str)
+            and re.fullmatch(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", values[0]) is not None,
+            "Default core asset series authority is ambiguous")
     return values[0]
 
 
+def tag_in_series(tag, series):
+    """Return whether tag is an exact final core tag `vX.Y.Z` whose `X.Y` equals series.
+    返回 tag 是否为精确正式核心标签 `vX.Y.Z` 且其 `X.Y` 等于 series。
+    """
+    match = re.fullmatch(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", tag) if isinstance(tag, str) else None
+    return match is not None and f"{match[1]}.{match[2]}" == series
+
+
 def source_metadata(root):
-    """Read root's project version, supported Python endpoints and core asset tag; return metadata.
-    读取 root 的项目版本、受支持 Python 端点及核心资产标签；返回元数据。
+    """Read root's project version, supported Python endpoints and core asset series; return metadata.
+    读取 root 的项目版本、受支持 Python 端点及核心资产系列；返回元数据。
     """
     import tomllib
     from packaging.specifiers import SpecifierSet
@@ -235,7 +245,7 @@ def source_metadata(root):
             "Python classifiers contradict requires-python")
     return {"name": project["name"], "sdk_version": version,
             "python": dict(zip(ROLES, (".".join(map(str, versions[0])), ".".join(map(str, versions[-1]))))),
-            "default_core_tag": default_asset((Path(root) / "src/luaskills/runtime_assets.py").read_bytes())}
+            "default_core_series": default_asset((Path(root) / "src/luaskills/runtime_assets.py").read_bytes())}
 
 
 def runner_for(os_name, architecture):
@@ -311,7 +321,10 @@ def freeze(args):
     require(run(["git", "rev-parse", "HEAD"], root).strip() == args.source_sha, "SDK checkout SHA mismatch")
     require(not run(["git", "status", "--porcelain"], root).strip(), "SDK source must be clean before freezing")
     metadata = source_metadata(root)
-    require(metadata["default_core_tag"] == args.core_tag, "SDK default asset tag differs from explicit independent core tag")
+    # Any published patch of the SDK's core series is acceptable; the native gates still prove the contract digest.
+    # SDK 核心系列内任一已发布补丁均可接受；原生门禁仍证明契约摘要一致。
+    require(tag_in_series(args.core_tag, metadata["default_core_series"]),
+            "Explicit independent core tag is outside the SDK default asset series")
     authority = core_module(args.core_root, args.core_commit)
     if args.mode == "publish":
         publication_preflight(authority, args.source_sha, metadata["sdk_version"])
@@ -353,7 +366,7 @@ def verify_artifacts(plan, directory, manifest=None):
                 metadata_names = [name for name in names if name.endswith(".dist-info/METADATA")]
                 require(len(metadata_names) == 1, "Wheel metadata identity is ambiguous")
                 metadata = BytesParser().parsebytes(archive.read(metadata_names[0]))
-                asset_tag = default_asset(archive.read("luaskills/runtime_assets.py"))
+                asset_series = default_asset(archive.read("luaskills/runtime_assets.py"))
         else:
             with tarfile.open(path, "r:gz") as archive:
                 members = archive.getmembers()
@@ -363,9 +376,10 @@ def verify_artifacts(plan, directory, manifest=None):
                 metadata = BytesParser().parsebytes(archive.extractfile(records[0]).read())
                 assets = [member for member in members if member.name.endswith("/src/luaskills/runtime_assets.py")]
                 require(len(assets) == 1 and assets[0].isfile(), "Sdist default asset identity is ambiguous")
-                asset_tag = default_asset(archive.extractfile(assets[0]).read())
+                asset_series = default_asset(archive.extractfile(assets[0]).read())
         require(metadata["Name"] == plan["name"] and metadata["Version"] == plan["sdk_version"], "Packaged SDK identity mismatch")
-        require(asset_tag == plan["core_tag"], "Packaged default core asset mismatch")
+        require(asset_series == plan["default_core_series"] and tag_in_series(plan["core_tag"], asset_series),
+                "Packaged default core asset series mismatch")
         artifacts[kind] = {"filename": path.name, "sha256": sha256(path), "size": path.stat().st_size}
     if manifest is not None:
         require(manifest == artifacts, "Tested package bytes changed")

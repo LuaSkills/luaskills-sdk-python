@@ -273,7 +273,8 @@ class Publication:
                   for platform, record in authority.candidate.PLATFORMS.items() for role in self.api.ROLES]
         self.api.require(set(plan["platforms"]) == set(authority.candidate.PLATFORMS)
                          and plan["matrix"] == matrix and plan["python"] == metadata["python"]
-                         and plan["default_core_tag"] == metadata["default_core_tag"] == core_tag,
+                         and plan["default_core_series"] == metadata["default_core_series"]
+                         and self.api.tag_in_series(core_tag, metadata["default_core_series"]),
                          "Original candidate platform/interpreter/default-asset declaration mismatch")
         self.api.verify_artifacts(plan, directory, aggregate["artifacts"])
         self.api.require({row["filename"] for row in wrapper["binding"]["inventory"]}
@@ -489,7 +490,8 @@ class Publication:
                          "Formal proof requires exact full source commits and positive explicit attempt identities")
         self.checked_source(args.completion_source_sha)
         metadata = self.api.source_metadata(self.sdk_root)
-        self.api.require(metadata["sdk_version"] == args.sdk_version and metadata["default_core_tag"] == args.core_tag,
+        self.api.require(metadata["sdk_version"] == args.sdk_version
+                         and self.api.tag_in_series(args.core_tag, metadata["default_core_series"]),
                          "Formal proof SDK version/default core asset differs from its frozen source")
         authority, recovery = self.authorities(args.core_root, args.core_commit)
         http = authority.Http()

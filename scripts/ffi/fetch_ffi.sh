@@ -13,9 +13,13 @@ RUNTIME_ROOT="${RUNTIME_ROOT:-output}"
 # LuaSkillsRepo 保存 LuaSkills FFI SDK 资产所在的 GitHub 仓库。
 LUASKILLS_REPO="${LUASKILLS_REPO:-LuaSkills/luaskills}"
 
-# LuaSkillsVersion stores the GitHub Release tag for LuaSkills FFI SDK assets.
-# LuaSkillsVersion 保存 LuaSkills FFI SDK 资产的 GitHub Release 标签。
+# LuaSkillsVersion optionally stores the exact GitHub Release tag; empty selects the newest published patch of the SDK core series.
+# LuaSkillsVersion 可选保存精确 GitHub Release 标签；为空时选择 SDK 核心系列最新已发布的补丁版本。
 LUASKILLS_VERSION="${LUASKILLS_VERSION:-}"
+
+# ContractDirectory holds the SDK's embedded contract copy, which names the core series and the required digest.
+# ContractDirectory 保存 SDK 嵌入式契约副本，其中给出核心系列及必需的契约摘要。
+CONTRACT_DIRECTORY="${CONTRACT_DIRECTORY:-$PROJECT_ROOT/src/luaskills/contracts/embedded/v1}"
 
 ensure_dir() {
   # Create one directory when it does not exist.
@@ -109,29 +113,89 @@ PY
   fi
 }
 
-resolve_luaskills_version() {
-  # Resolve the FFI SDK release tag from input or the local Cargo.toml.
-  # 从输入参数或本地 Cargo.toml 解析 FFI SDK 发布标签。
-  local explicit_tag="$1"
-  if [ -n "$explicit_tag" ]; then
-    printf '%s\n' "$explicit_tag"
-    return 0
-  fi
-  if [ -f "$PROJECT_ROOT/Cargo.toml" ]; then
-    python3 - "$PROJECT_ROOT/Cargo.toml" <<'PY'
-from pathlib import Path
+resolve_release_tag_for_series() {
+  # Resolve the newest published GitHub release tag inside one major.minor series.
+  # 解析一个 major.minor 系列内最新的已发布 GitHub release 标签。
+  local repo="$1"
+  local series="$2"
+  curl -fsSL "https://api.github.com/repos/${repo}/releases?per_page=100" | python3 -c '
+import json
 import re
 import sys
-text = Path(sys.argv[1]).read_text(encoding="utf-8")
-match = re.search(r'(?m)^version\s*=\s*"([^"]+)"', text)
-if not match:
-    raise SystemExit("Unable to resolve fallback LuaSkills version from Cargo.toml.")
-print(f"v{match.group(1)}")
-PY
-    return 0
+
+series = sys.argv[1]
+repo = sys.argv[2]
+if not re.fullmatch(r"\d+\.\d+", series):
+    raise SystemExit(f"unsupported core series: {series}")
+
+matches = []
+for release in json.load(sys.stdin):
+    if release.get("draft") or release.get("prerelease"):
+        continue
+    tag = str(release.get("tag_name", ""))
+    normalized = tag[1:] if tag.startswith("v") else tag
+    if not re.fullmatch(r"\d+\.\d+\.\d+", normalized):
+        continue
+    major, minor, patch = (int(part) for part in normalized.split("."))
+    if f"{major}.{minor}" != series:
+        continue
+    matches.append(((major, minor, patch), tag))
+
+if not matches:
+    raise SystemExit(f"no published release found for {repo} series {series}")
+
+matches.sort(key=lambda item: item[0], reverse=True)
+print(matches[0][1])
+' "$series" "$repo"
+}
+
+contract_digest() {
+  # Print the lowercase digest of one "<sha256>  contract.json" file, failing on any other shape.
+  # 输出 "<sha256>  contract.json" 文件的小写摘要，其他形状一律失败。
+  python3 -c '
+import re
+import sys
+fields = open(sys.argv[1], encoding="utf-8").read().split()
+if len(fields) != 2 or fields[1] != "contract.json" or not re.fullmatch(r"[0-9a-fA-F]{64}", fields[0]):
+    raise SystemExit(f"malformed contract digest file: {sys.argv[1]}")
+print(fields[0].lower())
+' "$1"
+}
+
+sdk_contract_series() {
+  # Print the core series of the SDK contract copy after checking the copy against its own digest.
+  # 校验 SDK 契约副本与其自身摘要一致后，输出其核心系列。
+  python3 -c '
+import hashlib
+import json
+import re
+import sys
+from pathlib import Path
+directory = Path(sys.argv[1])
+encoded = (directory / "contract.json").read_bytes()
+if sys.argv[2] != hashlib.sha256(encoded).hexdigest():
+    raise SystemExit(f"SDK embedded contract copy does not match its contract.sha256 in {directory}")
+series = json.loads(encoded).get("core_series")
+if not isinstance(series, str) or not re.fullmatch(r"\d+\.\d+", series):
+    raise SystemExit(f"SDK embedded contract has no valid core_series: {series!r}")
+print(series)
+' "$CONTRACT_DIRECTORY" "$1"
+}
+
+resolve_luaskills_version() {
+  # Return the explicit tag after checking it belongs to the SDK core series, or the newest published tag of that series.
+  # 显式标签经检查属于 SDK 核心系列后返回；否则返回该系列最新已发布标签。
+  local explicit_tag="$1"
+  if [ -z "$explicit_tag" ]; then
+    resolve_release_tag_for_series "$LUASKILLS_REPO" "$SDK_CORE_SERIES"
+    return
   fi
-  echo "LuaSkills FFI SDK version was not provided. Set LUASKILLS_VERSION or pass -LuaSkillsVersion in packaged PowerShell usage." >&2
-  return 1
+  if [[ ! "$explicit_tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] \
+    || [ "${BASH_REMATCH[1]}.${BASH_REMATCH[2]}" != "$SDK_CORE_SERIES" ]; then
+    echo "LuaSkills core tag $explicit_tag is outside the SDK core series $SDK_CORE_SERIES; expected v$SDK_CORE_SERIES.<patch>" >&2
+    return 1
+  fi
+  printf '%s\n' "$explicit_tag"
 }
 
 luaskills_library_candidates() {
@@ -183,6 +247,18 @@ install_luaskills_ffi() {
     return 1
   fi
   tar -xzf "$archive" -C "$extract_dir"
+  # The archive's contract digest must equal the SDK's before any file reaches the runtime root.
+  # 在任何文件进入运行根之前，归档的契约摘要必须等于 SDK 的契约摘要。
+  local archive_digest_file="$extract_dir/contracts/embedded/v1/contract.sha256" archive_digest=""
+  if [ ! -f "$archive_digest_file" ]; then
+    echo "Downloaded $asset_name ($LUASKILLS_VERSION) does not contain contracts/embedded/v1/contract.sha256" >&2
+    return 1
+  fi
+  archive_digest="$(contract_digest "$archive_digest_file")"
+  if [ "$archive_digest" != "$SDK_CONTRACT_DIGEST" ]; then
+    echo "LuaSkills core $LUASKILLS_VERSION embedded contract SHA-256 $archive_digest does not match this SDK's contract $SDK_CONTRACT_DIGEST" >&2
+    return 1
+  fi
   # Exact extracted core library required before any SDK content is copied into an existing runtime root.
   # 在任何 SDK 内容复制到现有运行根之前必须存在的精确解压核心库。
   local extracted_library="" candidate=""
@@ -211,6 +287,10 @@ install_luaskills_ffi() {
 }
 
 cd "$PROJECT_ROOT"
+# SdkContractDigest and SdkCoreSeries identify the SDK contract copy; the downloaded core must match both.
+# SdkContractDigest 与 SdkCoreSeries 标识 SDK 契约副本；下载的核心必须同时匹配二者。
+SDK_CONTRACT_DIGEST="$(contract_digest "$CONTRACT_DIRECTORY/contract.sha256")"
+SDK_CORE_SERIES="$(sdk_contract_series "$SDK_CONTRACT_DIGEST")"
 LUASKILLS_VERSION="$(resolve_luaskills_version "$LUASKILLS_VERSION")"
 ensure_dir "$RUNTIME_ROOT"
 install_luaskills_ffi

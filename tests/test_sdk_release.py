@@ -207,7 +207,7 @@ class ReleaseGateTests(unittest.TestCase):
         # 离线夹具使用已安装后端；正式构建绝不跳过工具要求。
         release.run([sys.executable, "-m", "build", "--no-isolation", "--skip-dependency-check", "--outdir", str(cls.dist)], project)
         cls.plan = {**release.source_metadata(ROOT), "schema_version": release.SCHEMA,
-                    "source_sha": "a" * 40, "mode": "publish", "core_tag": release.source_metadata(ROOT)["default_core_tag"],
+                    "source_sha": "a" * 40, "mode": "publish", "core_tag": "v" + release.source_metadata(ROOT)["default_core_series"] + ".0",
                     "core_commit": "b" * 40, "core_version": "0.5.7", "platforms": ["fixture-platform", "fixture-other"]}
         cls.artifacts = release.verify_artifacts(cls.plan, cls.dist)
 
@@ -276,9 +276,9 @@ class ReleaseGateTests(unittest.TestCase):
                 upload.assert_not_called()
             self.assertFalse((directory / "fresh/publish-proof.json").exists())
 
-    def test_changed_package_bytes_and_wrong_default_core_tag_fail(self):
-        """Reject a changed byte or different explicit core tag in real packages; return nothing.
-        拒绝真实包中的字节变化或不同显式核心标签；无返回值。
+    def test_changed_package_bytes_and_core_tag_outside_default_series_fail(self):
+        """Reject a changed byte or an explicit core tag outside the packaged series; accept any patch inside it.
+        拒绝真实包中的字节变化或包内系列之外的显式核心标签；接受系列内任一补丁版本。
         """
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
@@ -288,9 +288,30 @@ class ReleaseGateTests(unittest.TestCase):
                 stream.write(b"changed")
             with self.assertRaisesRegex(ValueError, "bytes changed"):
                 release.verify_artifacts(self.plan, directory, self.artifacts)
-        plan = dict(self.plan, core_tag="v999.0.0")
-        with self.assertRaisesRegex(ValueError, "default core asset"):
-            release.verify_artifacts(plan, self.dist)
+        series = self.plan["default_core_series"]
+        major, minor = (int(part) for part in series.split("."))
+        self.assertEqual(release.verify_artifacts(dict(self.plan, core_tag=f"v{series}.7"), self.dist), self.artifacts)
+        for tag in ("v999.0.0", f"v{major}.{minor + 1}.0", f"v{series}", f"v{series}.0-rc.1", f"{series}.0", f"v{series}.01"):
+            with self.subTest(core_tag=tag), self.assertRaisesRegex(ValueError, "default core asset series"):
+                release.verify_artifacts(dict(self.plan, core_tag=tag), self.dist)
+        with self.assertRaisesRegex(ValueError, "default core asset series"):
+            release.verify_artifacts(dict(self.plan, default_core_series=f"{major}.{minor + 1}"), self.dist)
+
+    def test_default_series_authority_and_tag_membership(self):
+        """Read only an unambiguous `major.minor` series literal and accept only exact final tags inside it.
+        仅读取无歧义的 `major.minor` 系列字面量，并只接受其中的精确正式标签。
+        """
+        self.assertEqual(release.default_asset(b'DEFAULT_LUASKILLS_SERIES = "0.9"\n'), "0.9")
+        for source in (b'DEFAULT_LUASKILLS_SERIES = "v0.9.0"\n', b'DEFAULT_LUASKILLS_SERIES = "0.9.0"\n',
+                       b'DEFAULT_LUASKILLS_SERIES = 0.9\n', b'DEFAULT_LUASKILLS_VERSION = "v0.9.0"\n',
+                       b'DEFAULT_LUASKILLS_SERIES = "0.9"\nDEFAULT_LUASKILLS_SERIES = "0.9"\n'):
+            with self.subTest(source=source), self.assertRaisesRegex(ValueError, "series authority"):
+                release.default_asset(source)
+        self.assertTrue(release.tag_in_series("v0.9.0", "0.9"))
+        self.assertTrue(release.tag_in_series("v0.9.12", "0.9"))
+        for tag in ("v0.8.2", "v0.10.0", "v1.9.0", "0.9.0", "v0.9", "v0.9.0-rc.1", "v0.9.01", None):
+            with self.subTest(tag=tag):
+                self.assertFalse(release.tag_in_series(tag, "0.9"))
 
     def test_complete_matrix_and_missing_duplicate_identity_negative(self):
         """Accept only complete exact reports, rejecting missing, duplicate or changed identity; return nothing.
@@ -712,7 +733,7 @@ class ReleaseGateTests(unittest.TestCase):
             authority.assert_not_called()
         env["GITHUB_WORKFLOW_SHA"] = args.source_sha
         with patch.dict(os.environ, env), patch.object(release, "run", side_effect=[args.source_sha, ""]), patch.object(release, "core_module") as authority:
-            with self.assertRaisesRegex(ValueError, "default asset tag"):
+            with self.assertRaisesRegex(ValueError, "outside the SDK default asset series"):
                 release.freeze(args)
             authority.assert_not_called()
 

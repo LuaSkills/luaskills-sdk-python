@@ -10,7 +10,7 @@ on:
         description: Exact default-branch SDK commit (40 lowercase hex characters)
         required: true
       core_tag:
-        description: Independently published exact core tag
+        description: Independently published exact core tag vX.Y.Z inside the SDK core series (DEFAULT_LUASKILLS_SERIES)
         required: true
       core_commit:
         description: Exact core commit (40 lowercase hex characters)

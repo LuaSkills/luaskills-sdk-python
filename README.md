@@ -6,7 +6,7 @@ Main LuaSkills repository: [LuaSkills/luaskills](https://github.com/LuaSkills/lu
 
 Python SDK for integrating the LuaSkills runtime through the public JSON FFI surface.
 
-This source aligns with released LuaSkills core `0.8.2`. SQLite is registered and managed by the host; runtime installers fetch only the core and Lua assets.
+This source aligns with the LuaSkills core `0.9` series (every published `0.9.x` patch whose contract digest matches). SQLite is registered and managed by the host; runtime installers fetch only the core and Lua assets.
 
 The SDK wraps native library loading, JSON FFI buffers, engine lifecycle, formal skill roots, authority-aware management calls, skill config, provider callbacks, host-tool callbacks, and runtime asset installation. Hosts should not need to hand-write low-level FFI buffers or JSON envelopes for normal integration.
 
@@ -39,7 +39,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/deps/sync_runtime_as
 RUNTIME_ROOT=/opt/luaskills scripts/deps/sync_runtime_assets.sh all
 ```
 
-Sync script targets are `all`, `luaskills`, and `lua`, with core `v0.8.2`. CLI database presets are only `none` and `host-callback`; the latter sets `sqlite_callback_mode: json` and still requires host registration.
+Sync script targets are `all`, `luaskills`, and `lua`. By default they install the newest published core patch of the `0.9` series (named by the packaged contract); `-LuaSkillsVersion` / `LUASKILLS_VERSION` selects an exact tag, which must belong to that series. CLI database presets are only `none` and `host-callback`; the latter sets `sqlite_callback_mode: json` and still requires host registration.
 
 `install-runtime` downloads GitHub Release assets, verifies `.sha256` sidecars, extracts native files and Lua runtime packages, and writes:
 
@@ -113,14 +113,17 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/deps/fetch_managed_r
 python scripts/debug-tools/managed_runtime_layout_check.py D:\VulcanCodeData\luaskills --distribution-root D:\VulcanCode\dependencies\runtimes --environment-root D:\VulcanCodeData\managed-runtime-envs
 ```
 
-Python SDK `0.8.2` pins LuaSkills core to the independently versioned `v0.8.2` and resolves runtime packages from the compatible `0.1` series by selecting the newest published patch automatically.
+Python SDK `0.9.0` resolves LuaSkills core from the `0.9` series and runtime packages from the compatible `0.1` series, selecting the newest published patch of each automatically.
 
 ## Version Alignment
 
-- SDK patch versions and core versions are independent; use the exact core version required by the packaged generated contract.
-- This source defaults to LuaSkills core tag `v0.8.2`.
+- SDK 0.9.x works with every LuaSkills core 0.9.x patch whose embedded contract digest matches the packaged contract; core patches need no SDK release.
+- `DEFAULT_LUASKILLS_SERIES` is `0.9`. `install-runtime` and the sync scripts pick the newest published (non-draft, non-prerelease) `v0.9.Z` tag; an explicit `--luaskills-version` must be a `v0.9.Z` tag. After extraction the archive's `contracts/embedded/v1/contract.sha256` must equal `EMBEDDED_CONTRACT_SHA256`, otherwise installation fails without trying another release.
+- At startup the library's reported `core_version` must be an exact `0.9.Z` and its `build.contract_sha256` must equal the packaged contract digest.
+- A new core minor series (a contract change) needs a new SDK minor release.
 - Runtime packages and native dependencies still come from the split `LuaSkills/luaskills-packages` and related release assets.
 - SDK default host options pass `runtime_root`, null managed-root override slots, and the complete stable `managed_runtime_config`; LuaSkills derives the fixed data layout until the host explicitly overrides roots or policy.
+- `preserve_host_writable_dirs` (default `false`) keeps the host-set `temp_dir` and `download_cache_root` instead of deriving them from `runtime_root`, so a read-only runtime root receives no transient files or downloads; both paths are then required. See `examples/read_only_runtime_root.py`.
 - Host tools live directly under `runtime_root/bin`, not `runtime_root/bin/tools`.
 
 ```powershell

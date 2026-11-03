@@ -10,7 +10,7 @@ on:
         description: Exact independently published Python SDK version
         required: true
       core_tag:
-        description: Exact independent published core tag
+        description: Exact independent published core tag vX.Y.Z inside the SDK core series (DEFAULT_LUASKILLS_SERIES)
         required: true
       core_commit:
         description: Exact core commit
