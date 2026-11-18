@@ -48,7 +48,6 @@ def main() -> None:
         print("Owning skill id:", client.skill_name_for_tool(tool_name, Authority.DELEGATED_TOOL))
         completions = client.prompt_argument_completions(tool_name, "note", Authority.DELEGATED_TOOL) or []
         print("Prompt completion count:", len(completions))
-        print("Help tree count:", len(client.list_skill_help(Authority.DELEGATED_TOOL)))
 
 
 if __name__ == "__main__":

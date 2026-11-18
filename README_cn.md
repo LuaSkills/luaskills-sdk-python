@@ -113,9 +113,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/deps/fetch_managed_r
 python scripts/debug-tools/managed_runtime_layout_check.py D:\VulcanCodeData\luaskills --distribution-root D:\VulcanCode\dependencies\runtimes --environment-root D:\VulcanCodeData\managed-runtime-envs
 ```
 
-Python SDK `0.9.1` 从 `0.9` 系列解析 LuaSkills core，从兼容的 `0.1` 协议线解析 runtime packages，两者都自动选择最新已发布的补丁版本。
+Python SDK `0.9.2` 从 `0.9` 系列解析 LuaSkills core，从兼容的 `0.1` 协议线解析 runtime packages，两者都自动选择最新已发布的补丁版本。
 
-SDK `0.9.1` 已针对 LuaSkills core `v0.9.1` 验证。公开 FFI 的 `list_entries` 和 `call_skill` 可发现和执行技能。旧包级帮助接口在该核心版本返回停用错误。随包指南注册及隐式调用入口目前由 Rust API 提供。
+SDK `0.9.2` 已针对 LuaSkills core `v0.9.1` 验证。公开 FFI 的 `list_entries` 和 `call_skill` 可发现和执行技能。旧包级帮助接口在该核心版本返回停用错误。随包指南注册及隐式调用入口目前由 Rust API 提供。
 
 ## 版本对齐
 

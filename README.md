@@ -113,9 +113,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/deps/fetch_managed_r
 python scripts/debug-tools/managed_runtime_layout_check.py D:\VulcanCodeData\luaskills --distribution-root D:\VulcanCode\dependencies\runtimes --environment-root D:\VulcanCodeData\managed-runtime-envs
 ```
 
-Python SDK `0.9.1` resolves LuaSkills core from the `0.9` series and runtime packages from the compatible `0.1` series, selecting the newest published patch of each automatically.
+Python SDK `0.9.2` resolves LuaSkills core from the `0.9` series and runtime packages from the compatible `0.1` series, selecting the newest published patch of each automatically.
 
-SDK `0.9.1` is verified against LuaSkills core `v0.9.1`. The public FFI exposes skill discovery and execution through `list_entries` and `call_skill`. Legacy package-help calls report retirement with this core. Bundled guide registration and implicit dispatch are currently available through the Rust API.
+SDK `0.9.2` is verified against LuaSkills core `v0.9.1`. The public FFI exposes skill discovery and execution through `list_entries` and `call_skill`. Legacy package-help calls report retirement with this core. Bundled guide registration and implicit dispatch are currently available through the Rust API.
 
 ## Version Alignment
 
